@@ -19,4 +19,4 @@ brackets = [
 ]
 block_comment = { start = "{% comment %}", prefix = "", end = "{% endcomment %}", tab_size = 2 }
 documentation = { start = "{% doc %}", end = "{% enddoc %}", prefix = " ", tab_size = 1 }
-completion_query_characters = ["-", "_", "."]
+completion_query_characters = ["-"]

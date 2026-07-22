@@ -63,7 +63,11 @@ impl LiquidExtension {
             .map_err(|error| format!("failed to write Liquid language server wrapper: {error}"))?;
 
         env::current_dir()
-            .map(|path| path.join(SERVER_WRAPPER_PATH).to_string_lossy().into_owned())
+            .map(|path| {
+                path.join(SERVER_WRAPPER_PATH)
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .map_err(|error| {
                 format!("failed to locate the Liquid extension work directory: {error}")
             })
@@ -126,6 +130,8 @@ zed::register_extension!(LiquidExtension);
 mod tests {
     use super::*;
 
+    const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
+
     #[test]
     fn wrapper_starts_the_official_language_server_directly() {
         assert!(SERVER_WRAPPER.contains("@shopify/theme-language-server-node/dist/index.js"));
@@ -171,5 +177,18 @@ mod tests {
     fn package_entry_matches_the_wrapper_dependency() {
         assert!(SERVER_PATH.ends_with("/dist/index.js"));
         assert!(SERVER_WRAPPER.contains(SERVER_PATH));
+    }
+
+    #[test]
+    fn property_access_triggers_unfiltered_completions() {
+        let query_characters = LANGUAGE_CONFIG
+            .lines()
+            .find(|line| line.starts_with("completion_query_characters"))
+            .expect("Liquid must configure completion query characters");
+
+        assert!(
+            !query_characters.contains("\".\""),
+            "including '.' makes Zed filter product property results against 'product.'"
+        );
     }
 }
