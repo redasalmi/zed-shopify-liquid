@@ -6,19 +6,10 @@ navigation, and editing features using the same core package as Shopify's VS
 Code extension.
 
 The extension also provides Liquid-aware indentation, code folding, document
-outlines, bracket matching, and embedded HTML, CSS, JavaScript, and JSON
-highlighting.
+outlines, bracket matching, embedded HTML, CSS, JavaScript, and JSON
+highlighting, and modern Theme Blocks syntax such as `content_for`.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
-
-> [!CAUTION]
-> The injections.scm used by this plugin considers the template
-> content to only be HTML.
->
-> *.js.liquid will not have correctly highlighted JS. No info is derived
-> from the file extension to set the base file type.
->
-> How to deal with this will come in the future.
 
 ## Configure diagnostics
 
@@ -72,4 +63,4 @@ update cannot be downloaded.
 
 ## Credits
 
-This extension uses [grammar](https://github.com/hankthetank27/tree-sitter-liquid) and queries from [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter/tree/master/queries/liquid)
+This extension uses a [Shopify-focused grammar fork](https://github.com/redasalmi/tree-sitter-liquid), based on [tree-sitter-liquid](https://github.com/hankthetank27/tree-sitter-liquid), and queries from [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter/tree/master/queries/liquid).

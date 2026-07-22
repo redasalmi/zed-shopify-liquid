@@ -3,6 +3,22 @@
   "render" @context
   file: (string) @name) @item
 
+; Dynamic block regions are named by their `blocks` mode.
+(content_for_statement
+  "content_for" @context
+  type: (string) @name
+  (#match? @name "^[\"']blocks[\"']$")) @item
+
+; Static block entries use the block `type` argument as their useful name.
+(content_for_statement
+  "content_for" @context
+  type: (string) @context
+  arguments: (content_for_argument_list
+    (content_for_argument
+      key: (identifier) @_type_key
+      value: (string) @name)
+    (#eq? @_type_key "type"))) @item
+
 (include_statement
   ["include" "include_relative"] @context
   (string) @name) @item

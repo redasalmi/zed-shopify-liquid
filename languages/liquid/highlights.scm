@@ -35,6 +35,10 @@
   key: (identifier) @variable.parameter
   (#set! priority 111))
 
+(content_for_argument
+  key: (_) @variable.parameter
+  (#set! priority 112))
+
 (assignment_statement
   variable_name: (identifier) @variable
   (#set! priority 112))
@@ -79,6 +83,7 @@
   "as"
   "assign"
   "capture"
+  "content_for"
   "custom_keyword"
   "decrement"
   "doc"
