@@ -5,6 +5,10 @@ Zed. The language server provides Theme Check diagnostics, completion, hover,
 navigation, and editing features using the same core package as Shopify's VS
 Code extension.
 
+The extension also provides Liquid-aware indentation, code folding, document
+outlines, bracket matching, and embedded HTML, CSS, JavaScript, and JSON
+highlighting.
+
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
 > [!CAUTION]

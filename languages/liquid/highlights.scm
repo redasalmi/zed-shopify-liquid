@@ -35,6 +35,30 @@
   key: (identifier) @variable.parameter
   (#set! priority 111))
 
+(assignment_statement
+  variable_name: (identifier) @variable
+  (#set! priority 112))
+
+(capture_statement
+  variable: (identifier) @variable
+  (#set! priority 112))
+
+(for_loop_statement
+  item: (identifier) @variable.parameter
+  (#set! priority 112))
+
+(tablerow_statement
+  item: (identifier) @variable.parameter
+  (#set! priority 112))
+
+(access
+  property: (_) @property
+  (#set! priority 112))
+
+((identifier) @constant.builtin
+  (#any-of? @constant.builtin "blank" "empty" "nil" "null")
+  (#set! priority 112))
+
 ((identifier) @variable
   (#set! priority 110))
 
@@ -55,7 +79,7 @@
   "as"
   "assign"
   "capture"
-  (custom_unpaired_statement)
+  "custom_keyword"
   "decrement"
   "doc"
   "echo"
