@@ -63,9 +63,82 @@ function fileNameForUri(uri) {
   }
 }
 
+function schemaSourceForSource(source) {
+  const match = /{%-?\s*schema\s*-?%}([\s\S]*?){%-?\s*endschema\s*-?%}/.exec(source);
+  return match?.[1] ?? null;
+}
+
+function parseSchema(source) {
+  if (source === null) return null;
+  try {
+    return JSON.parse(source);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function settingsFrom(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (setting) =>
+      setting &&
+      typeof setting === 'object' &&
+      typeof setting.id === 'string' &&
+      setting.id.length > 0,
+  );
+}
+
+function settingsCompletions(state, offset) {
+  const match = /\b(section|block)\.settings\.([a-zA-Z0-9_-]*)$/.exec(
+    state.document.getText().slice(0, offset),
+  );
+  if (!match || !state.schema) return null;
+
+  const objectName = match[1];
+  const partial = match[2];
+  const pathName = state.fileName.replace(/\\/g, '/');
+  let settings = [];
+
+  // Shopify's server already completes section settings and settings in Theme
+  // Block files. Only supplement its upstream gap for inline blocks declared
+  // by traditional section schemas, avoiding duplicate entries in Zed.
+  if (objectName !== 'block' || !pathName.includes('/sections/')) return null;
+
+  // The exact block.type cannot always be narrowed statically. Offer the union
+  // so every declared block setting remains discoverable; duplicate ids are
+  // collapsed below.
+  settings = Array.isArray(state.schema.blocks)
+    ? state.schema.blocks.flatMap((block) => settingsFrom(block?.settings))
+    : [];
+
+  const uniqueSettings = new Map(settings.map((setting) => [setting.id, setting]));
+  const items = [...uniqueSettings.values()]
+    .filter((setting) => setting.id.startsWith(partial))
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((setting) => {
+      const item = {
+        label: setting.id,
+        kind: CompletionItemKind.Property,
+      };
+      if (typeof setting.type === 'string') item.detail = `Shopify ${setting.type} setting`;
+      const documentation = [setting.label, setting.info]
+        .filter(
+          (value) =>
+            typeof value === 'string' && value.length > 0 && !value.startsWith('t:'),
+        )
+        .join('\n\n');
+      if (documentation) item.documentation = documentation;
+      return item;
+    });
+
+  return { isIncomplete: false, items };
+}
+
 function updateState(document) {
   const previous = statesByUri.get(document.uri);
-  const embedded = embeddedJavaScript(document.getText());
+  const source = document.getText();
+  const embedded = embeddedJavaScript(source);
+  const schemaSource = schemaSourceForSource(source);
   const scriptChanged = previous
     ? previous.embedded.source !== embedded.source
     : embedded.ranges.length > 0;
@@ -74,6 +147,9 @@ function updateState(document) {
     document,
     embedded,
     fileName: previous?.fileName || fileNameForUri(document.uri),
+    schema:
+      schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
+    schemaSource,
     hadEmbeddedJavaScript,
     needsValidation: !previous || scriptChanged,
     scriptVersion: (previous?.scriptVersion ?? 0) + (scriptChanged ? 1 : 0),
@@ -268,8 +344,8 @@ connection.onInitialize(() => ({
     hoverProvider: true,
   },
   serverInfo: {
-    name: 'liquid-embedded-javascript',
-    version: '0.2.0',
+    name: 'liquid-embedded-support',
+    version: '0.3.0',
   },
 }));
 
@@ -278,6 +354,8 @@ connection.onCompletion((params) => {
   if (!state) return null;
 
   const offset = state.document.offsetAt(params.position);
+  const settingResults = settingsCompletions(state, offset);
+  if (settingResults) return settingResults;
   if (!containsOffset(state.embedded.ranges, offset)) return null;
 
   const result = ensureLanguageService().getCompletionsAtPosition(state.fileName, offset, {

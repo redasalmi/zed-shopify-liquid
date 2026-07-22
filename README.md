@@ -11,6 +11,8 @@ highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
 `{% stylesheet %}` blocks support CSS completion, hover, and diagnostics through
 Shopify's language server. Bundled `{% javascript %}` blocks additionally
 support JavaScript completion, hover, and TypeScript-powered diagnostics.
+Schema-derived completion is also available for `section.settings.*` and
+`block.settings.*`, including inline blocks declared by a section.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -51,7 +53,8 @@ some whole-theme navigation operations slower on first use. Setting
 retaining checks on open and save.
 
 ## Configure Prettier formatting and Tailwind LSP
-``` json
+
+```json
 "lsp": {
   "tailwindcss-language-server": {
     "settings": {
@@ -88,6 +91,7 @@ responsive editing over legacy compound asset modes.
 - [x] CSS support in `{% stylesheet %}` blocks
 - [x] TypeScript-powered JavaScript support in `{% javascript %}` blocks
 - [x] Lazy loading and bounded memory for embedded JavaScript analysis
+- [x] Schema-derived `section.settings` and `block.settings` completion
 
 ### Next
 
@@ -112,6 +116,14 @@ responsive editing over legacy compound asset modes.
 Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy
 files remain usable as Liquid, but new work focuses on bundled assets and modern
 theme architecture.
+
+## Development
+
+See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
+comparison with the pre-overhaul extension, completed work, design decisions,
+performance notes, and repository relationships. [`AGENTS.md`](AGENTS.md)
+provides concise project guidance that Pi and compatible coding agents load in
+future sessions.
 
 ## Credits
 

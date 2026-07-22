@@ -240,11 +240,13 @@ mod tests {
     }
 
     #[test]
-    fn embedded_server_only_analyzes_javascript_tags() {
+    fn embedded_server_scopes_semantic_features_to_supported_regions() {
         assert!(EMBEDDED_SERVER.contains("javascript\\s*-?%}"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
+        assert!(EMBEDDED_SERVER.contains("settingsCompletions"));
+        assert!(EMBEDDED_SERVER.contains("schema.blocks.flatMap"));
     }
 
     #[test]
