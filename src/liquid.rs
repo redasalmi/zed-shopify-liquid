@@ -16,6 +16,7 @@ const SERVER_PATH: &str = "node_modules/@shopify/theme-language-server-node/dist
 const SERVER_WRAPPER_PATH: &str = "run-liquid-language-server.cjs";
 const EMBEDDED_SERVER_ID: &str = "liquid-embedded-javascript";
 const EMBEDDED_SERVER_PATH: &str = "run-liquid-embedded-javascript-server.cjs";
+const EMBEDDED_NODE_HEAP_ARG: &str = "--max-old-space-size=128";
 const TYPESCRIPT_PACKAGE_NAME: &str = "typescript";
 // TypeScript 7 currently exposes only its native CLI from CommonJS; the
 // embedded language server requires the stable JavaScript language-service API.
@@ -134,14 +135,25 @@ impl zed::Extension for LiquidExtension {
         language_server_id: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = if language_server_id.as_ref() == EMBEDDED_SERVER_ID {
+        let is_embedded_server = language_server_id.as_ref() == EMBEDDED_SERVER_ID;
+        let server_path = if is_embedded_server {
             self.embedded_server_script_path(language_server_id)?
         } else {
             self.server_script_path(language_server_id)?
         };
+        let args = if is_embedded_server {
+            // Bundled JavaScript blocks are intentionally small. A conservative
+            // heap cap prevents V8 from retaining hundreds of megabytes after
+            // repeated completion requests while leaving ample room for the
+            // TypeScript standard libraries and incremental program.
+            vec![EMBEDDED_NODE_HEAP_ARG.into(), server_path]
+        } else {
+            vec![server_path]
+        };
+
         Ok(zed::Command {
             command: zed::node_binary_path()?,
-            args: vec![server_path],
+            args,
             env: Default::default(),
         })
     }
@@ -232,13 +244,15 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("javascript\\s*-?%}"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
-        assert!(EMBEDDED_SERVER.contains("containsOffset(embedded.ranges"));
+        assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
     }
 
     #[test]
     fn embedded_server_uses_stable_typescript_language_service() {
         assert_eq!(TYPESCRIPT_PACKAGE_VERSION, "5.9.3");
         assert!(EMBEDDED_SERVER.contains("ts.createLanguageService"));
+        assert!(EMBEDDED_SERVER.contains("One incremental service is shared"));
+        assert_eq!(EMBEDDED_NODE_HEAP_ARG, "--max-old-space-size=128");
     }
 
     #[test]

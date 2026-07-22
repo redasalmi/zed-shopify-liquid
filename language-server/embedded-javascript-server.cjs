@@ -1,23 +1,28 @@
 'use strict';
 
-const path = require('node:path');
 const { fileURLToPath } = require('node:url');
-const ts = require('typescript');
 const {
   CompletionItemKind,
   DiagnosticSeverity,
   InsertTextFormat,
   ProposedFeatures,
   TextDocumentSyncKind,
+  TextDocuments,
   createConnection,
 } = require('vscode-languageserver/node');
 const { TextDocument } = require('vscode-languageserver-textdocument');
-const { TextDocuments } = require('vscode-languageserver/node');
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 const documents = new TextDocuments(TextDocument);
-const documentRegistry = ts.createDocumentRegistry();
+const statesByUri = new Map();
+const statesByFileName = new Map();
 const validationTimers = new Map();
+const librarySnapshots = new Map();
+let projectVersion = 0;
+let ts;
+let compilerOptions;
+let documentRegistry;
+let languageService;
 
 function embeddedJavaScript(source) {
   const ranges = [];
@@ -29,16 +34,21 @@ function embeddedJavaScript(source) {
     ranges.push({ start, end: start + match.groups.content.length });
   }
 
-  const characters = source
-    .split('')
-    .map((character) => (character === '\n' || character === '\r' ? character : ' '));
-  for (const range of ranges) {
-    for (let offset = range.start; offset < range.end; offset += 1) {
-      characters[offset] = source[offset];
-    }
-  }
+  // Preserve UTF-16 offsets and line endings so TypeScript ranges map directly
+  // back to the Liquid document. Avoid building the virtual source entirely
+  // for the common case where a Liquid file has no JavaScript block.
+  if (ranges.length === 0) return { source: '', ranges };
 
-  return { source: characters.join(''), ranges };
+  const segments = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    segments.push(source.slice(cursor, range.start).replace(/[^\r\n]/g, ' '));
+    segments.push(source.slice(range.start, range.end));
+    cursor = range.end;
+  }
+  segments.push(source.slice(cursor).replace(/[^\r\n]/g, ' '));
+
+  return { source: segments.join(''), ranges };
 }
 
 function containsOffset(ranges, offset) {
@@ -53,10 +63,71 @@ function fileNameForUri(uri) {
   }
 }
 
-function languageServiceFor(document) {
-  const fileName = fileNameForUri(document.uri);
+function updateState(document) {
+  const previous = statesByUri.get(document.uri);
   const embedded = embeddedJavaScript(document.getText());
-  const compilerOptions = {
+  const scriptChanged = previous
+    ? previous.embedded.source !== embedded.source
+    : embedded.ranges.length > 0;
+  const hadEmbeddedJavaScript = (previous?.embedded.ranges.length ?? 0) > 0;
+  const state = {
+    document,
+    embedded,
+    fileName: previous?.fileName || fileNameForUri(document.uri),
+    hadEmbeddedJavaScript,
+    needsValidation: !previous || scriptChanged,
+    scriptVersion: (previous?.scriptVersion ?? 0) + (scriptChanged ? 1 : 0),
+  };
+
+  statesByUri.set(document.uri, state);
+  statesByFileName.set(state.fileName, state);
+  if (scriptChanged) projectVersion += 1;
+  return state;
+}
+
+const languageServiceHost = {
+  getCompilationSettings: () => compilerOptions,
+  getScriptFileNames: () =>
+    [...statesByUri.values()]
+      .filter((state) => state.embedded.ranges.length > 0)
+      .map((state) => state.fileName),
+  getScriptVersion: (fileName) => String(statesByFileName.get(fileName)?.scriptVersion ?? 0),
+  getProjectVersion: () => String(projectVersion),
+  getScriptSnapshot: (fileName) => {
+    const state = statesByFileName.get(fileName);
+    if (state) return ts.ScriptSnapshot.fromString(state.embedded.source);
+
+    let snapshot = librarySnapshots.get(fileName);
+    if (snapshot) return snapshot;
+    const contents = ts.sys.readFile(fileName);
+    if (contents === undefined) return undefined;
+    snapshot = ts.ScriptSnapshot.fromString(contents);
+    librarySnapshots.set(fileName, snapshot);
+    return snapshot;
+  },
+  getScriptKind: (fileName) =>
+    statesByFileName.has(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.Unknown,
+  getCurrentDirectory: () => process.cwd(),
+  getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+  fileExists: (...args) => ts.sys.fileExists(...args),
+  readFile: (...args) => ts.sys.readFile(...args),
+  readDirectory: (...args) => ts.sys.readDirectory(...args),
+  directoryExists: (...args) => ts.sys.directoryExists(...args),
+  getDirectories: (...args) => ts.sys.getDirectories(...args),
+  useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
+  getNewLine: () => ts.sys.newLine,
+};
+
+// One incremental service is shared by all open Liquid documents. Creating a
+// service per request repeatedly parsed the DOM libraries and allowed the
+// document registry to retain hundreds of megabytes of duplicate programs.
+// Load TypeScript lazily so themes without open JavaScript blocks pay almost no
+// memory or startup cost for this optional server.
+function ensureLanguageService() {
+  if (languageService) return languageService;
+
+  ts = require('typescript');
+  compilerOptions = {
     allowJs: true,
     checkJs: true,
     target: ts.ScriptTarget.ES2022,
@@ -65,36 +136,9 @@ function languageServiceFor(document) {
     lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
     noEmit: true,
   };
-
-  const host = {
-    getCompilationSettings: () => compilerOptions,
-    getScriptFileNames: () => [fileName],
-    getScriptVersion: () => String(document.version),
-    getScriptSnapshot: (requestedFileName) => {
-      if (requestedFileName === fileName) {
-        return ts.ScriptSnapshot.fromString(embedded.source);
-      }
-      const contents = ts.sys.readFile(requestedFileName);
-      return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
-    },
-    getScriptKind: (requestedFileName) =>
-      requestedFileName === fileName ? ts.ScriptKind.JS : ts.ScriptKind.Unknown,
-    getCurrentDirectory: () => path.dirname(fileName),
-    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-    fileExists: ts.sys.fileExists,
-    readFile: ts.sys.readFile,
-    readDirectory: ts.sys.readDirectory,
-    directoryExists: ts.sys.directoryExists,
-    getDirectories: ts.sys.getDirectories,
-    useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-    getNewLine: () => ts.sys.newLine,
-  };
-
-  return {
-    embedded,
-    fileName,
-    service: ts.createLanguageService(host, documentRegistry),
-  };
+  documentRegistry = ts.createDocumentRegistry();
+  languageService = ts.createLanguageService(languageServiceHost, documentRegistry);
+  return languageService;
 }
 
 function rangeForSpan(document, span) {
@@ -157,45 +201,61 @@ function diagnosticSeverity(category) {
   }
 }
 
-async function validate(document) {
-  const { embedded, fileName, service } = languageServiceFor(document);
-  try {
-    const diagnostics = [
-      ...service.getSyntacticDiagnostics(fileName),
-      ...service.getSemanticDiagnostics(fileName),
-      ...service.getSuggestionDiagnostics(fileName),
-    ]
-      .filter(
-        (diagnostic) =>
-          diagnostic.start !== undefined &&
-          diagnostic.length !== undefined &&
-          containsOffset(embedded.ranges, diagnostic.start),
-      )
-      .map((diagnostic) => ({
-        range: rangeForSpan(document, {
-          start: diagnostic.start,
-          length: diagnostic.length,
-        }),
-        severity: diagnosticSeverity(diagnostic.category),
-        code: diagnostic.code,
-        source: 'typescript',
-        message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
-      }));
-
-    connection.sendDiagnostics({ uri: document.uri, diagnostics });
-  } finally {
-    service.dispose();
+function validate(uri) {
+  const state = statesByUri.get(uri);
+  if (!state || state.embedded.ranges.length === 0) {
+    connection.sendDiagnostics({ uri, diagnostics: [] });
+    return;
   }
+
+  const service = ensureLanguageService();
+  const diagnostics = [
+    ...service.getSyntacticDiagnostics(state.fileName),
+    ...service.getSemanticDiagnostics(state.fileName),
+    ...service.getSuggestionDiagnostics(state.fileName),
+  ]
+    .filter(
+      (diagnostic) =>
+        diagnostic.start !== undefined &&
+        diagnostic.length !== undefined &&
+        containsOffset(state.embedded.ranges, diagnostic.start),
+    )
+    .map((diagnostic) => ({
+      range: rangeForSpan(state.document, {
+        start: diagnostic.start,
+        length: diagnostic.length,
+      }),
+      severity: diagnosticSeverity(diagnostic.category),
+      code: diagnostic.code,
+      source: 'typescript',
+      message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+    }));
+
+  connection.sendDiagnostics({ uri, diagnostics });
 }
 
-function scheduleValidation(document) {
-  clearTimeout(validationTimers.get(document.uri));
+function scheduleValidation(state) {
+  if (state.embedded.ranges.length === 0) {
+    if (state.hadEmbeddedJavaScript) {
+      clearTimeout(validationTimers.get(state.document.uri));
+      validationTimers.delete(state.document.uri);
+      connection.sendDiagnostics({ uri: state.document.uri, diagnostics: [] });
+    }
+    return;
+  }
+  if (!state.needsValidation) return;
+
+  clearTimeout(validationTimers.get(state.document.uri));
   validationTimers.set(
-    document.uri,
+    state.document.uri,
     setTimeout(() => {
-      validationTimers.delete(document.uri);
-      validate(document).catch((error) => connection.console.error(String(error)));
-    }, 200),
+      validationTimers.delete(state.document.uri);
+      try {
+        validate(state.document.uri);
+      } catch (error) {
+        connection.console.error(String(error));
+      }
+    }, 350),
   );
 }
 
@@ -209,84 +269,80 @@ connection.onInitialize(() => ({
   },
   serverInfo: {
     name: 'liquid-embedded-javascript',
-    version: '0.1.0',
+    version: '0.2.0',
   },
 }));
 
 connection.onCompletion((params) => {
-  const document = documents.get(params.textDocument.uri);
-  if (!document) return null;
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state) return null;
 
-  const offset = document.offsetAt(params.position);
-  const { embedded, fileName, service } = languageServiceFor(document);
-  if (!containsOffset(embedded.ranges, offset)) {
-    service.dispose();
-    return null;
-  }
+  const offset = state.document.offsetAt(params.position);
+  if (!containsOffset(state.embedded.ranges, offset)) return null;
 
-  try {
-    const result = service.getCompletionsAtPosition(fileName, offset, {
-      includeCompletionsForModuleExports: false,
-      includeCompletionsWithInsertText: true,
-    });
-    if (!result) return null;
+  const result = ensureLanguageService().getCompletionsAtPosition(state.fileName, offset, {
+    includeCompletionsForModuleExports: false,
+    includeCompletionsWithInsertText: true,
+  });
+  if (!result) return null;
 
-    return {
-      isIncomplete: false,
-      items: result.entries.map((entry) => {
-        const item = {
-          label: entry.name,
-          kind: completionKind(entry.kind),
-          sortText: entry.sortText,
+  return {
+    isIncomplete: false,
+    items: result.entries.map((entry) => {
+      const item = {
+        label: entry.name,
+        kind: completionKind(entry.kind),
+        sortText: entry.sortText,
+      };
+      if (entry.insertText) item.insertText = entry.insertText;
+      if (entry.isSnippet) item.insertTextFormat = InsertTextFormat.Snippet;
+      if (entry.replacementSpan) {
+        item.textEdit = {
+          range: rangeForSpan(state.document, entry.replacementSpan),
+          newText: entry.insertText || entry.name,
         };
-        if (entry.insertText) item.insertText = entry.insertText;
-        if (entry.isSnippet) item.insertTextFormat = InsertTextFormat.Snippet;
-        if (entry.replacementSpan) {
-          item.textEdit = {
-            range: rangeForSpan(document, entry.replacementSpan),
-            newText: entry.insertText || entry.name,
-          };
-        }
-        return item;
-      }),
-    };
-  } finally {
-    service.dispose();
-  }
+      }
+      return item;
+    }),
+  };
 });
 
 connection.onHover((params) => {
-  const document = documents.get(params.textDocument.uri);
-  if (!document) return null;
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state) return null;
 
-  const offset = document.offsetAt(params.position);
-  const { embedded, fileName, service } = languageServiceFor(document);
-  if (!containsOffset(embedded.ranges, offset)) {
-    service.dispose();
-    return null;
-  }
+  const offset = state.document.offsetAt(params.position);
+  if (!containsOffset(state.embedded.ranges, offset)) return null;
 
-  try {
-    const info = service.getQuickInfoAtPosition(fileName, offset);
-    if (!info) return null;
-    const signature = ts.displayPartsToString(info.displayParts);
-    const documentation = ts.displayPartsToString(info.documentation);
-    const value = documentation ? `\u0060\u0060\u0060javascript\n${signature}\n\u0060\u0060\u0060\n\n${documentation}` : `\u0060\u0060\u0060javascript\n${signature}\n\u0060\u0060\u0060`;
-    return {
-      contents: { kind: 'markdown', value },
-      range: rangeForSpan(document, info.textSpan),
-    };
-  } finally {
-    service.dispose();
-  }
+  const info = ensureLanguageService().getQuickInfoAtPosition(state.fileName, offset);
+  if (!info) return null;
+  const signature = ts.displayPartsToString(info.displayParts);
+  const documentation = ts.displayPartsToString(info.documentation);
+  const value = documentation ? `\u0060\u0060\u0060javascript\n${signature}\n\u0060\u0060\u0060\n\n${documentation}` : `\u0060\u0060\u0060javascript\n${signature}\n\u0060\u0060\u0060`;
+  return {
+    contents: { kind: 'markdown', value },
+    range: rangeForSpan(state.document, info.textSpan),
+  };
 });
 
-documents.onDidOpen(({ document }) => scheduleValidation(document));
-documents.onDidChangeContent(({ document }) => scheduleValidation(document));
+documents.onDidOpen(({ document }) => scheduleValidation(updateState(document)));
+documents.onDidChangeContent(({ document }) => scheduleValidation(updateState(document)));
 documents.onDidClose(({ document }) => {
   clearTimeout(validationTimers.get(document.uri));
   validationTimers.delete(document.uri);
+
+  const state = statesByUri.get(document.uri);
+  if (state) {
+    statesByFileName.delete(state.fileName);
+    if (state.embedded.ranges.length > 0) projectVersion += 1;
+  }
+  statesByUri.delete(document.uri);
   connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
+});
+
+connection.onShutdown(() => {
+  languageService?.dispose();
+  librarySnapshots.clear();
 });
 
 documents.listen(connection);

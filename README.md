@@ -43,6 +43,13 @@ If Liquid has an explicit `language_servers` list in Zed settings, include both
 `liquid` and `liquid-embedded-javascript`. Lists containing `"..."` include the
 embedded server automatically.
 
+The embedded JavaScript server loads TypeScript only when a JavaScript block is
+open. For very large themes, setting `themeCheck.preloadOnBoot` to `false`
+reduces Shopify language-server startup work and memory at the cost of making
+some whole-theme navigation operations slower on first use. Setting
+`themeCheck.checkOnChange` to `false` further reduces work while typing while
+retaining checks on open and save.
+
 ## Configure Prettier formatting and Tailwind LSP
 ``` json
 "lsp": {
@@ -67,6 +74,44 @@ embedded server automatically.
   }
 }
 ```
+
+## Roadmap
+
+The roadmap prioritizes Shopify's current Theme Blocks architecture and reliable,
+responsive editing over legacy compound asset modes.
+
+### Foundation
+
+- [x] Shopify Theme Language Server integration and Theme Check diagnostics
+- [x] Liquid-aware highlighting, indentation, folding, outlines, and brackets
+- [x] Modern `content_for` Theme Blocks syntax
+- [x] CSS support in `{% stylesheet %}` blocks
+- [x] TypeScript-powered JavaScript support in `{% javascript %}` blocks
+- [x] Lazy loading and bounded memory for embedded JavaScript analysis
+
+### Next
+
+- [ ] Improve schema completion and validation for `@theme`, `@app`, targeted
+      blocks, nested blocks, presets, and platform-controlled settings
+- [ ] Add stronger go-to-definition and document links for snippets, sections,
+      blocks, `render`, `section`, and static `content_for` references
+- [ ] Expand LiquidDoc completion, highlighting, hover, and parameter types
+- [ ] Add HTML tag autoclosing and linked opening/closing tag editing
+- [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
+      navigation while continuing to profile latency and memory use
+
+### Quality and release work
+
+- [ ] Add query regression fixtures for highlighting, indentation, injections,
+      folding, and outlines
+- [ ] Add black-box language-server tests for diagnostics, completion, hover,
+      links, and embedded assets
+- [ ] Add automated extension packaging and Zed installation smoke tests
+- [ ] Consider contributing generally useful grammar improvements upstream
+
+Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy
+files remain usable as Liquid, but new work focuses on bundled assets and modern
+theme architecture.
 
 ## Credits
 
