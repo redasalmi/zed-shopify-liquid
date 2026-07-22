@@ -1,9 +1,11 @@
 # Shopify Liquid Extension for Zed
 
-This extension adds syntax highlighting for Liquid to Zed.
+This extension adds syntax highlighting and Shopify's Theme Language Server to
+Zed. The language server provides Theme Check diagnostics, completion, hover,
+navigation, and editing features using the same core package as Shopify's VS
+Code extension.
 
-More work is needed to bring this extension in line with vscode plugin, so
-contributions are welcome!
+More work is needed to reach full VS Code parity, so contributions are welcome!
 
 > [!CAUTION]
 > The injections.scm used by this plugin considers the template
@@ -13,6 +15,31 @@ contributions are welcome!
 > from the file extension to set the base file type.
 >
 > How to deal with this will come in the future.
+
+## Configure diagnostics
+
+Theme Check runs on open, change, and save by default. The settings can be
+overridden in Zed settings:
+
+```json
+"lsp": {
+  "liquid": {
+    "settings": {
+      "themeCheck": {
+        "checkOnOpen": true,
+        "checkOnChange": true,
+        "checkOnSave": true,
+        "preloadOnBoot": true
+      }
+    }
+  }
+}
+```
+
+Malformed HTML and Liquid are reported as diagnostics without stopping the
+server. If diagnostics disappear, open Zed's language server logs and restart
+the `Shopify Theme Language Server`; existing server files are retained when an
+update cannot be downloaded.
 
 ## Configure Prettier formatting and Tailwind LSP
 ``` json

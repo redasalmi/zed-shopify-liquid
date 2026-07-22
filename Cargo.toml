@@ -1,12 +1,9 @@
 [package]
 name = "zed_liquid"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 publish = false
 license = "MIT"
-
-# [lints]
-# workspace = true
 
 [lib]
 path = "src/liquid.rs"
