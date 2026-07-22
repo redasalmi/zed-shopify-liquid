@@ -7,7 +7,10 @@ Code extension.
 
 The extension also provides Liquid-aware indentation, code folding, document
 outlines, bracket matching, embedded HTML, CSS, JavaScript, and JSON
-highlighting, and modern Theme Blocks syntax such as `content_for`.
+highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
+`{% stylesheet %}` blocks support CSS completion, hover, and diagnostics through
+Shopify's language server. Bundled `{% javascript %}` blocks additionally
+support JavaScript completion, hover, and TypeScript-powered diagnostics.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -35,6 +38,10 @@ Malformed HTML and Liquid are reported as diagnostics without stopping the
 server. If diagnostics disappear, open Zed's language server logs and restart
 the `Shopify Theme Language Server`; existing server files are retained when an
 update cannot be downloaded.
+
+If Liquid has an explicit `language_servers` list in Zed settings, include both
+`liquid` and `liquid-embedded-javascript`. Lists containing `"..."` include the
+embedded server automatically.
 
 ## Configure Prettier formatting and Tailwind LSP
 ``` json

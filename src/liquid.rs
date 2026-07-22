@@ -4,6 +4,7 @@ use zed_extension_api::{self as zed, serde_json, Result};
 
 struct LiquidExtension {
     did_find_server: bool,
+    did_find_typescript: bool,
 }
 
 // Use the same language server package as Shopify's VS Code extension. Running
@@ -13,6 +14,13 @@ const PACKAGE_NAME: &str = "@shopify/theme-language-server-node";
 const PACKAGE_VERSION: &str = "2.22.0";
 const SERVER_PATH: &str = "node_modules/@shopify/theme-language-server-node/dist/index.js";
 const SERVER_WRAPPER_PATH: &str = "run-liquid-language-server.cjs";
+const EMBEDDED_SERVER_ID: &str = "liquid-embedded-javascript";
+const EMBEDDED_SERVER_PATH: &str = "run-liquid-embedded-javascript-server.cjs";
+const TYPESCRIPT_PACKAGE_NAME: &str = "typescript";
+// TypeScript 7 currently exposes only its native CLI from CommonJS; the
+// embedded language server requires the stable JavaScript language-service API.
+const TYPESCRIPT_PACKAGE_VERSION: &str = "5.9.3";
+const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
 const SERVER_WRAPPER: &str = r#"const { startServer } = require('./node_modules/@shopify/theme-language-server-node/dist/index.js');
 
 // Match Shopify's VS Code host: report unexpected failures without allowing a
@@ -72,6 +80,41 @@ impl LiquidExtension {
                 format!("failed to locate the Liquid extension work directory: {error}")
             })
     }
+
+    fn embedded_server_script_path(
+        &mut self,
+        language_server_id: &zed::LanguageServerId,
+    ) -> Result<String> {
+        // This also ensures the vscode-languageserver dependency supplied by
+        // Shopify's server package is available to the embedded server.
+        self.server_script_path(language_server_id)?;
+
+        if !self.did_find_typescript {
+            let installed_version = zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
+            if installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION) {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::Downloading,
+                );
+                zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, TYPESCRIPT_PACKAGE_VERSION)?;
+            }
+            self.did_find_typescript = true;
+        }
+
+        fs::write(EMBEDDED_SERVER_PATH, EMBEDDED_SERVER).map_err(|error| {
+            format!("failed to write embedded JavaScript language server: {error}")
+        })?;
+
+        env::current_dir()
+            .map(|path| {
+                path.join(EMBEDDED_SERVER_PATH)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .map_err(|error| {
+                format!("failed to locate the Liquid extension work directory: {error}")
+            })
+    }
 }
 
 fn workspace_configuration(settings: Option<serde_json::Value>) -> serde_json::Value {
@@ -82,6 +125,7 @@ impl zed::Extension for LiquidExtension {
     fn new() -> Self {
         Self {
             did_find_server: false,
+            did_find_typescript: false,
         }
     }
 
@@ -90,7 +134,11 @@ impl zed::Extension for LiquidExtension {
         language_server_id: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = self.server_script_path(language_server_id)?;
+        let server_path = if language_server_id.as_ref() == EMBEDDED_SERVER_ID {
+            self.embedded_server_script_path(language_server_id)?
+        } else {
+            self.server_script_path(language_server_id)?
+        };
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![server_path],
@@ -177,6 +225,20 @@ mod tests {
     fn package_entry_matches_the_wrapper_dependency() {
         assert!(SERVER_PATH.ends_with("/dist/index.js"));
         assert!(SERVER_WRAPPER.contains(SERVER_PATH));
+    }
+
+    #[test]
+    fn embedded_server_only_analyzes_javascript_tags() {
+        assert!(EMBEDDED_SERVER.contains("javascript\\s*-?%}"));
+        assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
+        assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
+        assert!(EMBEDDED_SERVER.contains("containsOffset(embedded.ranges"));
+    }
+
+    #[test]
+    fn embedded_server_uses_stable_typescript_language_service() {
+        assert_eq!(TYPESCRIPT_PACKAGE_VERSION, "5.9.3");
+        assert!(EMBEDDED_SERVER.contains("ts.createLanguageService"));
     }
 
     #[test]
