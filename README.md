@@ -127,8 +127,8 @@ responsive editing over legacy compound asset modes.
       a minimal Shopify integration smoke suite
 - [x] Curated query regression fixtures for highlighting, injections,
       indentation, folding, and outlines
-- [ ] Add a repeatable embedded-server stress test for memory and stale-state
-      regressions
+- [x] Repeatable embedded-server stress coverage for bounded memory and
+      stale-state regressions
 
 Generally useful grammar changes should be contributed upstream when practical;
 Shopify- or Zed-specific behavior remains local.
@@ -146,6 +146,8 @@ Install the pinned test dependencies and run the protocol and query suites:
 npm ci
 npm test
 ```
+
+Run the embedded-server stress workload independently with `npm run test:stress`.
 
 See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
 comparison with the pre-overhaul extension, completed work, design decisions,

@@ -4,7 +4,8 @@
   "scripts": {
     "test": "npm run test:lsp && npm run test:queries",
     "test:lsp": "node --test --test-concurrency=1 tests/language-server/*.test.cjs",
-    "test:queries": "node --test tests/queries/*.test.cjs"
+    "test:queries": "node --test tests/queries/*.test.cjs",
+    "test:stress": "node --test tests/language-server/embedded-stress.test.cjs"
   },
   "devDependencies": {
     "@shopify/theme-language-server-node": "2.22.0",

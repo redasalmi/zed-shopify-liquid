@@ -247,6 +247,25 @@ boundaries, outline names, and complete paired-statement indent regions that
 also provide Zed's folding structure. `npm test` runs both query and protocol
 contracts.
 
+### Embedded-server stress contract
+
+A repeatable stress test applies 300 unique full-document JavaScript updates and
+forces incremental completion and definition work after each change. Before the
+load phase it verifies that removed declarations disappear from definitions and
+become diagnostics, that obsolete diagnostics are replaced, and that removing a
+JavaScript block clears semantic providers. After the load phase it verifies the
+latest diagnostics and confirms that closing the document removes its state.
+
+The server still runs under its 128 MB V8 old-generation limit. On Linux and
+macOS the test also samples child-process RSS, enforcing a default 384 MiB
+ceiling and at most 128 MiB growth after completion warm-up; both thresholds can
+be overridden with `LIQUID_STRESS_RSS_LIMIT_MIB` and
+`LIQUID_STRESS_RSS_GROWTH_LIMIT_MIB`. Other platforms retain all semantic and
+process-survival checks while skipping RSS assertions. Two local runs averaged
+about 5–6 ms per update, with roughly 82 MiB idle RSS, 225 MiB after warm-up,
+and 325 MiB after the deliberately unique-source workload. These measurements
+are development observations rather than cross-platform guarantees.
+
 ## Current architecture
 
 ### Extension host

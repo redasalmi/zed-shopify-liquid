@@ -191,6 +191,17 @@ class ProtocolClient {
     return uri;
   }
 
+  change(uri, text, version) {
+    this.notify('textDocument/didChange', {
+      textDocument: { uri, version },
+      contentChanges: [{ text }],
+    });
+  }
+
+  close(uri) {
+    this.notify('textDocument/didClose', { textDocument: { uri } });
+  }
+
   async stop() {
     if (this.process.exitCode !== null) return;
     this.stopping = true;
