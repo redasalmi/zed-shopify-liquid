@@ -131,6 +131,16 @@ setting type and human-readable label information, suppresses untranslated
 and does not load TypeScript. A protocol test covering inline section-block
 settings used about 63 MB RSS.
 
+### LiquidDoc parameter type completion
+
+The embedded support server supplements Shopify's LiquidDoc completion when
+Zed autocloses the type braces in `@param {} name`. Shopify's provider handles
+an unfinished `{`, but not a cursor before an existing `}`. The supplemental
+provider offers the four primitive LiquidDoc types plus every Shopify Liquid
+object type, reading Shopify's updated documentation cache with the pinned
+package data as an offline fallback. It remains limited to LiquidDoc-capable
+snippet and Theme Block files and does not load TypeScript.
+
 ## Current architecture
 
 ### Extension host
@@ -141,8 +151,9 @@ points in Zed's extension work directory:
 1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS
    completion, diagnostics, hover, links, navigation, and Theme Check behavior.
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
-   inline section-block setting completion and owns JavaScript completion,
-   hover, and diagnostics inside bundled JavaScript tags.
+   inline section-block setting completion and paired-brace LiquidDoc parameter
+   type completion, and owns JavaScript completion, hover, and diagnostics
+   inside bundled JavaScript tags.
 
 The extension is currently version `0.12.0` and uses Zed extension API `0.7.0`.
 

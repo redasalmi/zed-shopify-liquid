@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const {
   CompletionItemKind,
@@ -23,6 +25,96 @@ let ts;
 let compilerOptions;
 let documentRegistry;
 let languageService;
+let liquidDocParamTypesPromise;
+
+const BASIC_LIQUID_DOC_PARAM_TYPES = [
+  ['string', undefined],
+  ['number', undefined],
+  ['boolean', undefined],
+  ['object', 'A generic type used to represent any Liquid object or primitive value.'],
+];
+
+async function readLiquidDocObjects() {
+  const docsUpdater = require('@shopify/theme-check-docs-updater');
+  const candidates = [
+    path.join(docsUpdater.root, 'objects.json'),
+    path.join(
+      path.dirname(require.resolve('@shopify/theme-check-docs-updater/package.json')),
+      'data',
+      'objects.json',
+    ),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const objects = JSON.parse(await fs.readFile(candidate, 'utf8'));
+      if (Array.isArray(objects)) return objects;
+    } catch (_error) {
+      // Prefer Shopify's updated cache, then fall back to the object data
+      // bundled with the pinned language server package.
+    }
+  }
+  return [];
+}
+
+function liquidDocParamTypes() {
+  if (!liquidDocParamTypesPromise) {
+    liquidDocParamTypesPromise = readLiquidDocObjects().then((objects) => {
+      const types = new Map(BASIC_LIQUID_DOC_PARAM_TYPES);
+      for (const object of objects) {
+        if (typeof object?.name === 'string' && object.name.length > 0) {
+          types.set(object.name, object.summary || object.description);
+        }
+      }
+      return types;
+    });
+  }
+  return liquidDocParamTypesPromise;
+}
+
+function fileSupportsLiquidDoc(fileName) {
+  const normalized = fileName.replace(/\\/g, '/');
+  return normalized.includes('/snippets/') || normalized.includes('/blocks/');
+}
+
+function isInsideLiquidDoc(source, offset) {
+  const tagPattern = /{%-?\s*(end)?doc\s*-?%}/g;
+  let active = false;
+  let match;
+  while ((match = tagPattern.exec(source)) !== null && match.index < offset) {
+    active = !match[1];
+  }
+  return active;
+}
+
+async function liquidDocTypeCompletions(state, offset) {
+  if (!fileSupportsLiquidDoc(state.fileName)) return null;
+
+  const source = state.document.getText();
+  if (!isInsideLiquidDoc(source, offset)) return null;
+
+  const beforeCursor = source.slice(0, offset);
+  const currentLine = beforeCursor.slice(beforeCursor.lastIndexOf('\n') + 1);
+  if (!/^\s*@param\s+\{\s*[a-zA-Z_]*$/.test(currentLine)) return null;
+
+  // Shopify's provider handles an unfinished opening brace. Supplement the
+  // paired-brace form produced by Zed's autoclose behavior.
+  if (!/^\s*\}/.test(source.slice(offset))) return null;
+
+  const types = await liquidDocParamTypes();
+  return {
+    isIncomplete: false,
+    items: [...types].map(([label, description]) => {
+      const item = {
+        label,
+        kind: CompletionItemKind.EnumMember,
+        detail: 'LiquidDoc parameter type',
+      };
+      if (description) item.documentation = { kind: 'markdown', value: description };
+      return item;
+    }),
+  };
+}
 
 function embeddedJavaScript(source) {
   const ranges = [];
@@ -339,7 +431,7 @@ connection.onInitialize(() => ({
   capabilities: {
     textDocumentSync: TextDocumentSyncKind.Incremental,
     completionProvider: {
-      triggerCharacters: ['.', '"', "'"],
+      triggerCharacters: ['.', '"', "'", '{'],
     },
     hoverProvider: true,
   },
@@ -349,13 +441,15 @@ connection.onInitialize(() => ({
   },
 }));
 
-connection.onCompletion((params) => {
+connection.onCompletion(async (params) => {
   const state = statesByUri.get(params.textDocument.uri);
   if (!state) return null;
 
   const offset = state.document.offsetAt(params.position);
   const settingResults = settingsCompletions(state, offset);
   if (settingResults) return settingResults;
+  const liquidDocTypeResults = await liquidDocTypeCompletions(state, offset);
+  if (liquidDocTypeResults) return liquidDocTypeResults;
   if (!containsOffset(state.embedded.ranges, offset)) return null;
 
   const result = ensureLanguageService().getCompletionsAtPosition(state.fileName, offset, {

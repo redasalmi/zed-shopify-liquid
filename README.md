@@ -12,7 +12,9 @@ highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
 Shopify's language server. Bundled `{% javascript %}` blocks additionally
 support JavaScript completion, hover, and TypeScript-powered diagnostics.
 Schema-derived completion is also available for `section.settings.*` and
-`block.settings.*`, including inline blocks declared by a section.
+`block.settings.*`, including inline blocks declared by a section. LiquidDoc
+`@param` declarations complete every supported primitive and Shopify Liquid
+object type inside paired `{}` braces.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -99,7 +101,7 @@ responsive editing over legacy compound asset modes.
       blocks, nested blocks, presets, and platform-controlled settings
 - [ ] Add stronger go-to-definition and document links for snippets, sections,
       blocks, `render`, `section`, and static `content_for` references
-- [ ] Expand LiquidDoc completion, highlighting, hover, and parameter types
+- [ ] Expand LiquidDoc tag completion, highlighting, hover, and parameter semantics
 - [ ] Add HTML tag autoclosing and linked opening/closing tag editing
 - [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
       navigation while continuing to profile latency and memory use

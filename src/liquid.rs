@@ -247,6 +247,9 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
         assert!(EMBEDDED_SERVER.contains("settingsCompletions"));
         assert!(EMBEDDED_SERVER.contains("schema.blocks.flatMap"));
+        assert!(EMBEDDED_SERVER.contains("liquidDocTypeCompletions"));
+        assert!(EMBEDDED_SERVER.contains("@shopify/theme-check-docs-updater"));
+        assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
     }
 
     #[test]
