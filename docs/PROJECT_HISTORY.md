@@ -156,6 +156,17 @@ object type, reading Shopify's updated documentation cache with the pinned
 package data as an offline fallback. It remains limited to LiquidDoc-capable
 snippet and Theme Block files and does not load TypeScript.
 
+### Static file navigation
+
+Shopify's language server remains the owner of document links for static
+`render`, `include`, `section`, asset, schema block, and `content_for 'block'`
+references. Its definition provider only resolves translation keys, however, so
+the embedded support server fills that confirmed gap for snippet, section, and
+static block file references. It uses Shopify's tolerant Liquid parser lazily,
+returns definitions only for files that exist, supports references inside
+`{% liquid %}`, and infers the nearest root from standard theme directories so
+nested themes do not resolve references from an unrelated parent theme.
+
 ## Current architecture
 
 ### Extension host
@@ -166,9 +177,9 @@ points in Zed's extension work directory:
 1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS
    completion, diagnostics, hover, links, navigation, and Theme Check behavior.
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
-   inline section-block setting completion and paired-brace LiquidDoc parameter
-   type completion, and owns JavaScript completion, hover, and diagnostics
-   inside bundled JavaScript tags.
+   inline section-block setting completion, paired-brace LiquidDoc parameter
+   type completion, and static file definitions, and owns JavaScript completion,
+   hover, and diagnostics inside bundled JavaScript tags.
 
 The extension is currently version `0.13.0` and uses Zed extension API `0.7.0`.
 

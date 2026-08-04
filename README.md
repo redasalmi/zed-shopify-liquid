@@ -16,7 +16,8 @@ Schema-derived completion is also available for `section.settings.*` and
 language server provides modern `{% schema %}` completion and validation for
 `@theme`, `@app`, targeted and nested blocks, and presets. LiquidDoc `@param`
 declarations complete every supported primitive and Shopify Liquid object type
-inside paired `{}` braces.
+inside paired `{}` braces. Go-to-definition and document links navigate static
+`render`, `include`, `section`, and `content_for 'block'` file references.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -101,20 +102,19 @@ responsive editing over legacy compound asset modes.
 
 - [x] Modern `{% schema %}` completion and validation for `@theme`, `@app`,
       targeted blocks, nested blocks, and presets through Shopify's server
-- [ ] Add stronger go-to-definition and document links for snippets, sections,
-      blocks, `render`, `section`, and static `content_for` references
+- [x] Go-to-definition and document links for snippets, sections, blocks,
+      `render`, `include`, `section`, and static `content_for` references
 - [ ] Expand LiquidDoc tag completion, highlighting, hover, and parameter semantics
 - [ ] Add HTML tag autoclosing and linked opening/closing tag editing
 - [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
       navigation while continuing to profile latency and memory use
 
-### Quality and release work
+### Quality
 
 - [ ] Add query regression fixtures for highlighting, indentation, injections,
       folding, and outlines
 - [ ] Add black-box language-server tests for diagnostics, completion, hover,
       links, and embedded assets
-- [ ] Add automated extension packaging and Zed installation smoke tests
 - [ ] Consider contributing generally useful grammar improvements upstream
 
 Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy

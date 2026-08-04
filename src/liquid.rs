@@ -250,6 +250,9 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("liquidDocTypeCompletions"));
         assert!(EMBEDDED_SERVER.contains("@shopify/theme-check-docs-updater"));
         assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
+        assert!(EMBEDDED_SERVER.contains("definitionForReference"));
+        assert!(EMBEDDED_SERVER.contains("toTolerantLiquidHtmlAST"));
+        assert!(EMBEDDED_SERVER.contains("pathToFileURL(candidate)"));
     }
 
     #[test]

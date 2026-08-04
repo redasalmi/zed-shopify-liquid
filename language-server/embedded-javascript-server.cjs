@@ -2,7 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { fileURLToPath } = require('node:url');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 const {
   CompletionItemKind,
   DiagnosticSeverity,
@@ -26,6 +26,7 @@ let compilerOptions;
 let documentRegistry;
 let languageService;
 let liquidDocParamTypesPromise;
+let liquidParser;
 
 const BASIC_LIQUID_DOC_PARAM_TYPES = [
   ['string', undefined],
@@ -33,6 +34,16 @@ const BASIC_LIQUID_DOC_PARAM_TYPES = [
   ['boolean', undefined],
   ['object', 'A generic type used to represent any Liquid object or primitive value.'],
 ];
+const THEME_DIRECTORIES = new Set([
+  'assets',
+  'blocks',
+  'config',
+  'layout',
+  'locales',
+  'sections',
+  'snippets',
+  'templates',
+]);
 
 async function readLiquidDocObjects() {
   const docsUpdater = require('@shopify/theme-check-docs-updater');
@@ -113,6 +124,92 @@ async function liquidDocTypeCompletions(state, offset) {
       if (description) item.documentation = { kind: 'markdown', value: description };
       return item;
     }),
+  };
+}
+
+function ensureLiquidParser() {
+  if (!liquidParser) liquidParser = require('@shopify/liquid-html-parser');
+  return liquidParser;
+}
+
+function referencesInSource(source) {
+  const references = [];
+  try {
+    const { NodeTypes, toTolerantLiquidHtmlAST, walk } = ensureLiquidParser();
+    const ast = toTolerantLiquidHtmlAST(source);
+
+    walk(ast, (node) => {
+      if (node.type !== NodeTypes.LiquidTag || typeof node.markup === 'string') return;
+
+      let category;
+      let target;
+      if ((node.name === 'render' || node.name === 'include') && node.markup.snippet) {
+        category = 'snippets';
+        target = node.markup.snippet;
+      } else if (node.name === 'section' && node.markup.name) {
+        category = 'sections';
+        target = node.markup.name;
+      } else if (node.name === 'content_for' && node.markup.contentForType?.value === 'block') {
+        category = 'blocks';
+        target = node.markup.args?.find((argument) => argument.name === 'type')?.value;
+      }
+
+      if (category && target?.type === NodeTypes.String) {
+        references.push({
+          category,
+          name: target.value,
+          start: target.position.start,
+          end: target.position.end,
+        });
+      }
+    });
+  } catch (_error) {
+    // Incomplete documents can still fail tolerant parsing. Definition requests
+    // should simply fall through instead of disrupting the support server.
+  }
+  return references;
+}
+
+function themeRootForFile(fileName) {
+  let directory = path.dirname(fileName);
+  while (true) {
+    if (THEME_DIRECTORIES.has(path.basename(directory))) return path.dirname(directory);
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+async function definitionForReference(state, offset) {
+  if (!state.definitionReferences) {
+    state.definitionReferences = referencesInSource(state.document.getText());
+  }
+  const reference = state.definitionReferences.find(
+    (candidate) => offset >= candidate.start && offset <= candidate.end,
+  );
+  if (!reference || path.basename(reference.name) !== reference.name) return null;
+
+  let root;
+  try {
+    root = themeRootForFile(fileURLToPath(state.document.uri));
+  } catch (_error) {
+    return null;
+  }
+  if (!root) return null;
+
+  const candidate = path.join(root, reference.category, `${reference.name}.liquid`);
+  try {
+    if (!(await fs.stat(candidate)).isFile()) return null;
+  } catch (_error) {
+    return null;
+  }
+
+  return {
+    uri: pathToFileURL(candidate).toString(),
+    range: {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 0 },
+    },
   };
 }
 
@@ -433,6 +530,7 @@ connection.onInitialize(() => ({
     completionProvider: {
       triggerCharacters: ['.', '"', "'", '{'],
     },
+    definitionProvider: true,
     hoverProvider: true,
   },
   serverInfo: {
@@ -477,6 +575,12 @@ connection.onCompletion(async (params) => {
       return item;
     }),
   };
+});
+
+connection.onDefinition(async (params) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state) return null;
+  return definitionForReference(state, state.document.offsetAt(params.position));
 });
 
 connection.onHover((params) => {
