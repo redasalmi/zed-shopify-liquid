@@ -185,6 +185,17 @@ returns definitions only for files that exist, supports references inside
 `{% liquid %}`, and infers the nearest root from standard theme directories so
 nested themes do not resolve references from an unrelated parent theme.
 
+### HTML tag editing
+
+Shopify's language server already provides HTML element autoclosing through
+`textDocument/onTypeFormatting` and synchronized opening/closing tag names
+through `textDocument/linkedEditingRange`. Protocol fixtures confirmed both the
+closing-tag edit returned after typing `>` and the paired name ranges returned
+inside an existing element. Zed enables on-type formatting and linked edits by
+default, so the extension delegates both features to Shopify without adding a
+second parser or provider. Users can still override Zed's `use_on_type_format`
+or `linked_edits` settings.
+
 ## Current architecture
 
 ### Extension host
@@ -193,7 +204,8 @@ nested themes do not resolve references from an unrelated parent theme.
 points in Zed's extension work directory:
 
 1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS
-   completion, diagnostics, hover, links, navigation, and Theme Check behavior.
+   completion, diagnostics, hover, links, navigation, HTML tag editing, and
+   Theme Check behavior.
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
    inline section-block setting completion, paired-brace LiquidDoc parameter
    type completion, and static file definitions, and owns JavaScript completion,

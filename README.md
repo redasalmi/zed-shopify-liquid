@@ -20,6 +20,8 @@ inside paired `{}` braces. Typing `@` in LiquidDoc opens Shopify's `@param`,
 `@description`, and `@example` snippets, while system-authored `@prompt` blocks
 receive dedicated highlighting. Go-to-definition and document links navigate
 static `render`, `include`, `section`, and `content_for 'block'` file references.
+HTML opening tags autoclose, and renaming an opening or closing tag updates its
+linked counterpart through Shopify's language server.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -108,7 +110,8 @@ responsive editing over legacy compound asset modes.
       `render`, `include`, `section`, and static `content_for` references
 - [x] LiquidDoc tag and type completion, `@prompt` highlighting, hover, and
       render/block parameter semantics
-- [ ] Add HTML tag autoclosing and linked opening/closing tag editing
+- [x] HTML tag autoclosing and linked opening/closing tag editing through
+      Shopify's language server
 - [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
       navigation while continuing to profile latency and memory use
 
