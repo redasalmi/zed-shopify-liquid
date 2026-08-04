@@ -11,7 +11,7 @@ const REPOSITORY_ROOT = path.resolve(__dirname, '../..');
 const DEFAULT_TIMEOUT = 30_000;
 
 class ProtocolClient {
-  constructor(args, { cwd = REPOSITORY_ROOT, configuration = {}, workspaceRoot } = {}) {
+  constructor(args, { cwd = REPOSITORY_ROOT, configuration = {}, env = {}, workspaceRoot } = {}) {
     this.configuration = configuration;
     this.workspaceRoot = workspaceRoot;
     this.nextId = 1;
@@ -25,7 +25,7 @@ class ProtocolClient {
 
     this.process = spawn(process.execPath, args, {
       cwd,
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      env: { ...process.env, NODE_NO_WARNINGS: '1', ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.process.stdout.on('data', (chunk) => this.#read(chunk));
@@ -253,10 +253,10 @@ async function createTheme(files) {
   };
 }
 
-function embeddedClient(root) {
+function embeddedClient(root, { env = {} } = {}) {
   return new ProtocolClient(
     ['--max-old-space-size=128', path.join(REPOSITORY_ROOT, 'language-server/embedded-javascript-server.cjs')],
-    { workspaceRoot: root },
+    { env, workspaceRoot: root },
   );
 }
 

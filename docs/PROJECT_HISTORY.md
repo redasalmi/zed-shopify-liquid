@@ -130,6 +130,11 @@ approximately 6.5 ms per request on average, about 213 MB active RSS, and about
 60 MB idle RSS before TypeScript was loaded. These figures are development
 measurements rather than cross-platform guarantees.
 
+Subsequent hardening added per-document snapshot caching, exact structural
+change detection, lazy reusable JavaScript and CSS virtual documents, and idle
+TypeScript disposal with lazy recreation. Current budgets and workloads live in
+[`PERFORMANCE.md`](PERFORMANCE.md).
+
 ### Embedded navigation and range formatting
 
 Shopify's language server remains responsible for completion, hover, and
@@ -249,22 +254,27 @@ contracts.
 
 ### Embedded-server stress contract
 
-A repeatable stress test applies 300 unique full-document JavaScript updates and
-forces incremental completion and definition work after each change. Before the
-load phase it verifies that removed declarations disappear from definitions and
-become diagnostics, that obsolete diagnostics are replaced, and that removing a
-JavaScript block clears semantic providers. After the load phase it verifies the
-latest diagnostics and confirms that closing the document removes its state.
+The repeatable stress suite first applies 150 updates to a 64 KiB plain Liquid
+document and verifies that embedded services remain unloaded. Its primary load
+applies 300 unique full-document JavaScript updates and forces incremental
+completion and definition work after each change. Before that load it verifies
+that removed declarations disappear from definitions and become diagnostics,
+that obsolete diagnostics are replaced, and that removing a JavaScript block
+clears semantic providers. Afterward it verifies the latest diagnostics and
+confirms that closing the document removes its state. A separate lifecycle case
+forces idle TypeScript disposal and verifies successful lazy recreation.
 
 The server still runs under its 128 MB V8 old-generation limit. On Linux and
 macOS the test also samples child-process RSS, enforcing a default 384 MiB
-ceiling and at most 128 MiB growth after completion warm-up; both thresholds can
-be overridden with `LIQUID_STRESS_RSS_LIMIT_MIB` and
-`LIQUID_STRESS_RSS_GROWTH_LIMIT_MIB`. Other platforms retain all semantic and
-process-survival checks while skipping RSS assertions. Two local runs averaged
-about 5–6 ms per update, with roughly 82 MiB idle RSS, 225 MiB after warm-up,
-and 325 MiB after the deliberately unique-source workload. These measurements
-are development observations rather than cross-platform guarantees.
+ceiling and at most 128 MiB growth after completion warm-up. Plain Liquid churn
+may grow RSS by at most 32 MiB, and TypeScript recreation may add at most 96 MiB
+over its first warm state. Threshold overrides and the optimization plan are
+documented in [`PERFORMANCE.md`](PERFORMANCE.md). Other platforms retain all
+semantic and process-survival checks while skipping RSS assertions. A local run
+averaged 0.6 ms for 150 plain 64 KiB updates and 5.6 ms for the JavaScript load,
+with about 82 MiB idle RSS, 225 MiB after warm-up, and 324 MiB after the
+deliberately unique-source workload. These measurements are development
+observations rather than cross-platform guarantees.
 
 ## Current architecture
 

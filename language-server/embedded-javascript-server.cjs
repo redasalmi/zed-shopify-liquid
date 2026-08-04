@@ -20,12 +20,21 @@ const statesByUri = new Map();
 const statesByFileName = new Map();
 const validationTimers = new Map();
 const librarySnapshots = new Map();
+const configuredTypescriptIdleMilliseconds = Number.parseInt(
+  process.env.LIQUID_TYPESCRIPT_IDLE_MS || '',
+  10,
+);
+const typescriptIdleMilliseconds = Number.isFinite(configuredTypescriptIdleMilliseconds)
+  ? Math.max(0, configuredTypescriptIdleMilliseconds)
+  : 30_000;
+const performanceLogging = process.env.LIQUID_PERFORMANCE_LOGGING === '1';
 let projectVersion = 0;
 let ts;
 let compilerOptions;
 let cssLanguageService;
 let documentRegistry;
 let languageService;
+let languageServiceIdleTimer;
 let liquidDocParamTypesPromise;
 let liquidDocLanguageTools;
 let liquidParser;
@@ -248,6 +257,16 @@ async function definitionForReference(state, offset) {
   };
 }
 
+function lineBreakOffsets(source) {
+  const offsets = [];
+  const pattern = /[\r\n]/g;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    offsets.push(match.index * 2 + (match[0] === '\r' ? 1 : 0));
+  }
+  return offsets;
+}
+
 function embeddedLanguage(source, tagName) {
   const ranges = [];
   const pattern = new RegExp(
@@ -262,19 +281,14 @@ function embeddedLanguage(source, tagName) {
   }
 
   // Preserve UTF-16 offsets and line endings so embedded-service ranges map
-  // directly back to Liquid. Avoid virtual sources when the tag is absent.
-  if (ranges.length === 0) return { source: '', ranges };
-
-  const segments = [];
-  let cursor = 0;
-  for (const range of ranges) {
-    segments.push(source.slice(cursor, range.start).replace(/[^\r\n]/g, ' '));
-    segments.push(source.slice(range.start, range.end));
-    cursor = range.end;
-  }
-  segments.push(source.slice(cursor).replace(/[^\r\n]/g, ' '));
-
-  return { source: segments.join(''), ranges };
+  // directly back to Liquid. Materialize the full-length virtual document only
+  // when a language service needs it.
+  return {
+    documentSource: ranges.length > 0 ? source : null,
+    lineBreaks: null,
+    source: ranges.length > 0 ? null : '',
+    ranges,
+  };
 }
 
 function embeddedJavaScript(source) {
@@ -283,6 +297,41 @@ function embeddedJavaScript(source) {
 
 function embeddedStylesheet(source) {
   return embeddedLanguage(source, 'stylesheet');
+}
+
+function sameEmbeddedLanguage(left, right) {
+  if (left.documentSource?.length !== right.documentSource?.length) return false;
+  if (left.ranges.length !== right.ranges.length) return false;
+  if (left.ranges.length === 0) return true;
+  if (left.lineBreaks.length !== right.lineBreaks.length) return false;
+  for (let index = 0; index < left.lineBreaks.length; index += 1) {
+    if (left.lineBreaks[index] !== right.lineBreaks[index]) return false;
+  }
+  return left.ranges.every((range, index) => {
+    const candidate = right.ranges[index];
+    if (range.start !== candidate.start || range.end !== candidate.end) return false;
+    for (let offset = range.start; offset < range.end; offset += 1) {
+      if (left.documentSource.charCodeAt(offset) !== right.documentSource.charCodeAt(offset)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function embeddedSource(embedded) {
+  if (embedded.source !== null) return embedded.source;
+
+  const segments = [];
+  let cursor = 0;
+  for (const range of embedded.ranges) {
+    segments.push(embedded.documentSource.slice(cursor, range.start).replace(/[^\r\n]/g, ' '));
+    segments.push(embedded.documentSource.slice(range.start, range.end));
+    cursor = range.end;
+  }
+  segments.push(embedded.documentSource.slice(cursor).replace(/[^\r\n]/g, ' '));
+  embedded.source = segments.join('');
+  return embedded.source;
 }
 
 function containsOffset(ranges, offset) {
@@ -377,10 +426,21 @@ function updateState(document) {
   const source = document.getText();
   const embedded = embeddedJavaScript(source);
   const stylesheet = embeddedStylesheet(source);
+  const lineBreaks =
+    embedded.ranges.length > 0 || stylesheet.ranges.length > 0
+      ? lineBreakOffsets(source)
+      : [];
+  embedded.lineBreaks = lineBreaks;
+  stylesheet.lineBreaks = lineBreaks;
   const schemaSource = schemaSourceForSource(source);
   const scriptChanged = previous
-    ? previous.embedded.source !== embedded.source
+    ? !sameEmbeddedLanguage(previous.embedded, embedded)
     : embedded.ranges.length > 0;
+  const stylesheetChanged = previous
+    ? !sameEmbeddedLanguage(previous.stylesheet, stylesheet)
+    : stylesheet.ranges.length > 0;
+  if (previous && !scriptChanged) embedded.source = previous.embedded.source;
+  if (previous && !stylesheetChanged) stylesheet.source = previous.stylesheet.source;
   const hadEmbeddedJavaScript = (previous?.embedded.ranges.length ?? 0) > 0;
   const state = {
     document,
@@ -391,13 +451,17 @@ function updateState(document) {
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
     schemaSource,
     hadEmbeddedJavaScript,
+    cssDocument: stylesheetChanged ? undefined : previous?.cssDocument,
     needsValidation: !previous || scriptChanged,
+    scriptSnapshot: scriptChanged ? undefined : previous?.scriptSnapshot,
     scriptVersion: (previous?.scriptVersion ?? 0) + (scriptChanged ? 1 : 0),
   };
 
   statesByUri.set(document.uri, state);
   statesByFileName.set(state.fileName, state);
   if (scriptChanged) projectVersion += 1;
+  if (embedded.ranges.length > 0) cancelLanguageServiceDisposal();
+  else if (hadEmbeddedJavaScript) scheduleLanguageServiceDisposal();
   return state;
 }
 
@@ -411,7 +475,12 @@ const languageServiceHost = {
   getProjectVersion: () => String(projectVersion),
   getScriptSnapshot: (fileName) => {
     const state = statesByFileName.get(fileName);
-    if (state) return ts.ScriptSnapshot.fromString(state.embedded.source);
+    if (state) {
+      if (!state.scriptSnapshot) {
+        state.scriptSnapshot = ts.ScriptSnapshot.fromString(embeddedSource(state.embedded));
+      }
+      return state.scriptSnapshot;
+    }
 
     let snapshot = librarySnapshots.get(fileName);
     if (snapshot) return snapshot;
@@ -439,7 +508,36 @@ const languageServiceHost = {
 // document registry to retain hundreds of megabytes of duplicate programs.
 // Load TypeScript lazily so themes without open JavaScript blocks pay almost no
 // memory or startup cost for this optional server.
+function hasEmbeddedJavaScriptDocuments() {
+  return [...statesByUri.values()].some((state) => state.embedded.ranges.length > 0);
+}
+
+function cancelLanguageServiceDisposal() {
+  clearTimeout(languageServiceIdleTimer);
+  languageServiceIdleTimer = undefined;
+}
+
+function disposeLanguageService() {
+  languageService?.dispose();
+  languageService = undefined;
+  documentRegistry = undefined;
+  compilerOptions = undefined;
+  librarySnapshots.clear();
+  languageServiceIdleTimer = undefined;
+  if (performanceLogging) connection.console.info('TypeScript language service disposed');
+}
+
+function scheduleLanguageServiceDisposal() {
+  if (!languageService || hasEmbeddedJavaScriptDocuments()) return;
+  cancelLanguageServiceDisposal();
+  languageServiceIdleTimer = setTimeout(() => {
+    if (!hasEmbeddedJavaScriptDocuments()) disposeLanguageService();
+  }, typescriptIdleMilliseconds);
+  languageServiceIdleTimer.unref?.();
+}
+
 function ensureLanguageService() {
+  cancelLanguageServiceDisposal();
   if (languageService) return languageService;
 
   ts = require('typescript');
@@ -478,7 +576,7 @@ function cssDocument(state) {
       state.document.uri,
       'css',
       state.document.version,
-      state.stylesheet.source,
+      embeddedSource(state.stylesheet),
     );
   }
   return state.cssDocument;
@@ -799,10 +897,12 @@ documents.onDidClose(({ document }) => {
     if (state.embedded.ranges.length > 0) projectVersion += 1;
   }
   statesByUri.delete(document.uri);
+  scheduleLanguageServiceDisposal();
   connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
 });
 
 connection.onShutdown(() => {
+  cancelLanguageServiceDisposal();
   languageService?.dispose();
   librarySnapshots.clear();
 });

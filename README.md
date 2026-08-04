@@ -57,7 +57,9 @@ If Liquid has an explicit `language_servers` list in Zed settings, include both
 embedded server automatically.
 
 The embedded JavaScript server loads TypeScript only when a JavaScript block is
-open. For very large themes, setting `themeCheck.preloadOnBoot` to `false`
+open and releases its analysis state 30 seconds after the final JavaScript
+document becomes inactive. For very large themes, setting
+`themeCheck.preloadOnBoot` to `false`
 reduces Shopify language-server startup work and memory at the cost of making
 some whole-theme navigation operations slower on first use. Setting
 `themeCheck.checkOnChange` to `false` further reduces work while typing while
@@ -148,6 +150,8 @@ npm test
 ```
 
 Run the embedded-server stress workload independently with `npm run test:stress`.
+The enforced budgets and optimization strategy are documented in the
+[Performance Plan](docs/PERFORMANCE.md).
 
 See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
 comparison with the pre-overhaul extension, completed work, design decisions,
