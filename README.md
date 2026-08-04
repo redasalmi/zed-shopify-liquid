@@ -12,9 +12,11 @@ highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
 Shopify's language server. Bundled `{% javascript %}` blocks additionally
 support JavaScript completion, hover, and TypeScript-powered diagnostics.
 Schema-derived completion is also available for `section.settings.*` and
-`block.settings.*`, including inline blocks declared by a section. LiquidDoc
-`@param` declarations complete every supported primitive and Shopify Liquid
-object type inside paired `{}` braces.
+`block.settings.*`, including inline blocks declared by a section. Shopify's
+language server provides modern `{% schema %}` completion and validation for
+`@theme`, `@app`, targeted and nested blocks, and presets. LiquidDoc `@param`
+declarations complete every supported primitive and Shopify Liquid object type
+inside paired `{}` braces.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -97,8 +99,8 @@ responsive editing over legacy compound asset modes.
 
 ### Next
 
-- [ ] Improve schema completion and validation for `@theme`, `@app`, targeted
-      blocks, nested blocks, presets, and platform-controlled settings
+- [x] Modern `{% schema %}` completion and validation for `@theme`, `@app`,
+      targeted blocks, nested blocks, and presets through Shopify's server
 - [ ] Add stronger go-to-definition and document links for snippets, sections,
       blocks, `render`, `section`, and static `content_for` references
 - [ ] Expand LiquidDoc tag completion, highlighting, hover, and parameter semantics
@@ -117,7 +119,8 @@ responsive editing over legacy compound asset modes.
 
 Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy
 files remain usable as Liquid, but new work focuses on bundled assets and modern
-theme architecture.
+theme architecture. Platform-controlled settings remain Shopify-owned theme
+JSON data; the extension does not duplicate unsupported JSON semantics.
 
 ## Development
 

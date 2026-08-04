@@ -70,6 +70,21 @@ The grammar checkout under `grammars/liquid` is a separate Git repository. Its
 `origin` is the Shopify-focused fork and its `upstream` is the original grammar.
 Grammar changes must be committed there first and then pinned in this extension.
 
+### Modern schema authoring
+
+The pinned Shopify language server already supplies completion and validation
+for modern `{% schema %}` constructs, including `@theme`, `@app`, targeted and
+private block files, nested preset blocks, and preset setting ids. Protocol-level
+verification confirmed that these providers discover block files from the current
+theme and correctly exclude private blocks from unrestricted preset choices.
+The extension delegates this behavior to Shopify rather than maintaining a
+parallel schema implementation.
+
+Platform-controlled custom CSS is Shopify-owned data in `settings_data.json`
+and JSON template section instances, not a user-authored `{% schema %}` setting.
+The extension does not attach a supplemental server to every JSON document or
+reimplement semantics that Shopify's language server does not expose.
+
 ### Shopify object completion — `ffe94e8`
 
 Shopify's server already returned object properties such as the 44 documented
@@ -185,6 +200,9 @@ setup.
 - Follow Shopify Theme Tools and Shopify's VS Code extension as behavioral and
   architectural references.
 - Prefer official Shopify packages over reimplementing Liquid semantics.
+- Do not duplicate completion, validation, or navigation providers already
+  exposed by Shopify's language server; supplement only confirmed host or
+  upstream gaps.
 - Keep versions pinned for reproducible startup and compatibility.
 - Maintain a small grammar fork only where upstream syntax support is missing.
 - Prioritize Theme Blocks, `content_for`, modern schemas, bundled assets, and
