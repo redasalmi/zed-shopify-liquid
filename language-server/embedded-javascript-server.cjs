@@ -26,6 +26,7 @@ let compilerOptions;
 let documentRegistry;
 let languageService;
 let liquidDocParamTypesPromise;
+let liquidDocLanguageTools;
 let liquidParser;
 
 const BASIC_LIQUID_DOC_PARAM_TYPES = [
@@ -96,6 +97,39 @@ function isInsideLiquidDoc(source, offset) {
     active = !match[1];
   }
   return active;
+}
+
+function liquidDocTagCompletions(state, offset, context) {
+  if (context?.triggerCharacter !== '@' || !fileSupportsLiquidDoc(state.fileName)) return null;
+
+  const source = state.document.getText();
+  if (!isInsideLiquidDoc(source, offset)) return null;
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+  if (!/^\s*@$/.test(source.slice(lineStart, offset))) return null;
+
+  if (!liquidDocLanguageTools) {
+    liquidDocLanguageTools = require(
+      '@shopify/theme-language-server-common/dist/utils/liquidDoc',
+    );
+  }
+  const { formatLiquidDocTagHandle, SUPPORTED_LIQUID_DOC_TAG_HANDLES } =
+    liquidDocLanguageTools;
+
+  return {
+    isIncomplete: false,
+    items: Object.entries(SUPPORTED_LIQUID_DOC_TAG_HANDLES).map(
+      ([label, { description, example, template }]) => ({
+        label,
+        kind: CompletionItemKind.EnumMember,
+        documentation: {
+          kind: 'markdown',
+          value: formatLiquidDocTagHandle(label, description, example),
+        },
+        insertText: template,
+        insertTextFormat: InsertTextFormat.Snippet,
+      }),
+    ),
+  };
 }
 
 async function liquidDocTypeCompletions(state, offset) {
@@ -528,14 +562,14 @@ connection.onInitialize(() => ({
   capabilities: {
     textDocumentSync: TextDocumentSyncKind.Incremental,
     completionProvider: {
-      triggerCharacters: ['.', '"', "'", '{'],
+      triggerCharacters: ['.', '"', "'", '{', '@'],
     },
     definitionProvider: true,
     hoverProvider: true,
   },
   serverInfo: {
     name: 'liquid-embedded-support',
-    version: '0.3.0',
+    version: '0.4.0',
   },
 }));
 
@@ -546,6 +580,8 @@ connection.onCompletion(async (params) => {
   const offset = state.document.offsetAt(params.position);
   const settingResults = settingsCompletions(state, offset);
   if (settingResults) return settingResults;
+  const liquidDocTagResults = liquidDocTagCompletions(state, offset, params.context);
+  if (liquidDocTagResults) return liquidDocTagResults;
   const liquidDocTypeResults = await liquidDocTypeCompletions(state, offset);
   if (liquidDocTypeResults) return liquidDocTypeResults;
   if (!containsOffset(state.embedded.ranges, offset)) return null;

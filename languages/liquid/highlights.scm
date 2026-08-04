@@ -27,6 +27,12 @@
 ((doc_example_content) @embedded
   (#set! priority 125))
 
+("@prompt" @keyword
+  (#set! priority 122))
+
+((doc_prompt_content) @string
+  (#set! priority 122))
+
 (raw_statement
   (raw_content) @spell
   (#set! priority 110))

@@ -16,8 +16,10 @@ Schema-derived completion is also available for `section.settings.*` and
 language server provides modern `{% schema %}` completion and validation for
 `@theme`, `@app`, targeted and nested blocks, and presets. LiquidDoc `@param`
 declarations complete every supported primitive and Shopify Liquid object type
-inside paired `{}` braces. Go-to-definition and document links navigate static
-`render`, `include`, `section`, and `content_for 'block'` file references.
+inside paired `{}` braces. Typing `@` in LiquidDoc opens Shopify's `@param`,
+`@description`, and `@example` snippets, while system-authored `@prompt` blocks
+receive dedicated highlighting. Go-to-definition and document links navigate
+static `render`, `include`, `section`, and `content_for 'block'` file references.
 
 More work is needed to reach full VS Code parity, so contributions are welcome!
 
@@ -104,7 +106,8 @@ responsive editing over legacy compound asset modes.
       targeted blocks, nested blocks, and presets through Shopify's server
 - [x] Go-to-definition and document links for snippets, sections, blocks,
       `render`, `include`, `section`, and static `content_for` references
-- [ ] Expand LiquidDoc tag completion, highlighting, hover, and parameter semantics
+- [x] LiquidDoc tag and type completion, `@prompt` highlighting, hover, and
+      render/block parameter semantics
 - [ ] Add HTML tag autoclosing and linked opening/closing tag editing
 - [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
       navigation while continuing to profile latency and memory use

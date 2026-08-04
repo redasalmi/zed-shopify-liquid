@@ -8,7 +8,7 @@ repository = "https://github.com/redasalmi/zed-shopify-liquid"
 
 [grammars.liquid]
 repository = "https://github.com/redasalmi/tree-sitter-liquid"
-commit = "9c1a5e1f8647206eaeb4ddb0a19cfa9f51b7b918"
+commit = "e229daeca9b64337451e02db52b1b92da77961b2"
 
 [language_servers.liquid]
 name = "Shopify Theme Language Server"

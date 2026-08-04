@@ -64,7 +64,7 @@ incrementally by the original maintainers.
 - Fixed the grammar's Rust build to compile its external scanner.
 - Added corpus fixtures and checked representative syntax from a modern Shopify
   theme.
-- Pinned grammar commit `9c1a5e1f8647206eaeb4ddb0a19cfa9f51b7b918`.
+- Pinned grammar commit `e229daeca9b64337451e02db52b1b92da77961b2`.
 
 The grammar checkout under `grammars/liquid` is a separate Git repository. Its
 `origin` is the Shopify-focused fork and its `upstream` is the original grammar.
@@ -155,6 +155,24 @@ provider offers the four primitive LiquidDoc types plus every Shopify Liquid
 object type, reading Shopify's updated documentation cache with the pinned
 package data as an offline fallback. It remains limited to LiquidDoc-capable
 snippet and Theme Block files and does not load TypeScript.
+
+### LiquidDoc tags and parameter semantics
+
+Shopify's language server remains responsible for LiquidDoc tag hover and for
+using documented parameters in `render` and static `content_for` completion,
+hover, rename, and Theme Check diagnostics. Protocol verification confirmed its
+hover and render-parameter providers. Its advertised `@` trigger returned no tag
+completions through Zed's trigger request, despite the underlying provider
+support, so the embedded server fills only that integration gap. It imports
+Shopify's own supported handles, documentation, and snippet templates and runs
+only for an `@` trigger at the start of a LiquidDoc line.
+
+The grammar now recognizes Shopify's system-controlled `@prompt` annotation and
+highlights its free-form content. Prompt and example content preserve unknown
+`@words`, email addresses, braces, and embedded Liquid while still ending at the
+next supported annotation. This matches the annotation already parsed by
+Shopify's Liquid parser and highlighted by Shopify's TextMate grammar without
+exposing it as a public completion tag.
 
 ### Static file navigation
 
