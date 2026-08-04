@@ -190,6 +190,7 @@ zed::register_extension!(LiquidExtension);
 mod tests {
     use super::*;
 
+    const EXTENSION_MANIFEST: &str = include_str!("../extension.toml");
     const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
     const TEST_PACKAGE: &str = include_str!("../package.json");
 
@@ -248,6 +249,19 @@ mod tests {
             package["devDependencies"][TYPESCRIPT_PACKAGE_NAME],
             TYPESCRIPT_PACKAGE_VERSION
         );
+    }
+
+    #[test]
+    fn query_test_grammar_matches_the_extension_pin() {
+        let package: serde_json::Value = serde_json::from_str(TEST_PACKAGE).unwrap();
+        let grammar_package = package["devDependencies"]["tree-sitter-liquid"]
+            .as_str()
+            .unwrap();
+        let grammar_commit = EXTENSION_MANIFEST
+            .lines()
+            .find_map(|line| line.strip_prefix("commit = \"")?.strip_suffix('"'))
+            .unwrap();
+        assert!(grammar_package.contains(grammar_commit));
     }
 
     #[test]

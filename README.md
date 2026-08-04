@@ -125,7 +125,7 @@ responsive editing over legacy compound asset modes.
 
 - [x] Black-box protocol tests for extension-owned language-server behavior and
       a minimal Shopify integration smoke suite
-- [ ] Add curated query regression fixtures for highlighting, injections,
+- [x] Curated query regression fixtures for highlighting, injections,
       indentation, folding, and outlines
 - [ ] Add a repeatable embedded-server stress test for memory and stale-state
       regressions
@@ -140,11 +140,11 @@ JSON data; the extension does not duplicate unsupported JSON semantics.
 
 ## Development
 
-Install the pinned test dependencies and run the language-server protocol suite:
+Install the pinned test dependencies and run the protocol and query suites:
 
 ```sh
-npm ci --ignore-scripts
-npm run test:lsp
+npm ci
+npm test
 ```
 
 See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed

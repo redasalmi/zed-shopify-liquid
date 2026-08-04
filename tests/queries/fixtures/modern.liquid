@@ -1,0 +1,37 @@
+---
+title: Query fixture
+---
+
+{% comment %}Query-only comment.{% endcomment %}
+
+{% doc %}
+  @description Renders a product card.
+  @param {product} product - Product to render.
+  @prompt Keep this concise for merchants.
+  @example Example: {%- content_for 'block', type: 'example', id: 'doc' -%}
+{% enddoc %}
+
+{% render 'card', product: product %}
+{% content_for 'block', type: 'hero', id: 'main' %}
+{% assign card_title = product.title %}
+{% for variant in product.variants %}
+  {{ variant.title }}
+{% endfor %}
+
+{% if product.available %}
+  <div class="product-card">{{ product.title }}</div>
+{% else %}
+  <p>Unavailable</p>
+{% endif %}
+
+{% stylesheet %}
+.button { color: red; }
+{% endstylesheet %}
+
+{% javascript %}
+const banner = document.querySelector('.product-card');
+{% endjavascript %}
+
+{% schema %}
+{"name":"Product card","settings":[]}
+{% endschema %}

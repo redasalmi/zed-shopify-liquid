@@ -230,8 +230,22 @@ links, HTML autoclosing, and linked tag editing without duplicating Shopify's
 provider-level test suite.
 
 The test dependencies pin the same Shopify server and TypeScript versions used
-by the extension. `npm run test:lsp` is the deterministic integration command;
-Zed remains the final host-level check.
+by the extension. `npm run test:lsp` is the deterministic protocol command; Zed
+remains the final host-level check.
+
+### Tree-sitter query contracts
+
+Grammar corpus tests validate syntax trees but not the captures consumed by Zed.
+A pinned Tree-sitter CLI now executes the extension's actual highlight,
+injection, indent, and outline queries against a curated modern Liquid fixture.
+The test package downloads the exact grammar commit pinned in `extension.toml`,
+and a Rust test prevents those pins from drifting.
+The fixture covers front matter, LiquidDoc annotations, composition tags,
+`content_for`, assignments, loops, conditional branches, HTML, bundled CSS and
+JavaScript, and schema JSON. Tests assert semantic captures, embedded-language
+boundaries, outline names, and complete paired-statement indent regions that
+also provide Zed's folding structure. `npm test` runs both query and protocol
+contracts.
 
 ## Current architecture
 

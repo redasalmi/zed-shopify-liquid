@@ -2,10 +2,18 @@
   "name": "zed-shopify-liquid-tests",
   "private": true,
   "scripts": {
-    "test:lsp": "node --test --test-concurrency=1 tests/language-server/*.test.cjs"
+    "test": "npm run test:lsp && npm run test:queries",
+    "test:lsp": "node --test --test-concurrency=1 tests/language-server/*.test.cjs",
+    "test:queries": "node --test tests/queries/*.test.cjs"
   },
   "devDependencies": {
     "@shopify/theme-language-server-node": "2.22.0",
+    "tree-sitter-cli": "0.22.6",
+    "tree-sitter-liquid": "https://github.com/redasalmi/tree-sitter-liquid/archive/e229daeca9b64337451e02db52b1b92da77961b2.tar.gz",
     "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "tree-sitter-cli@0.22.6": true,
+    "tree-sitter": false
   }
 }
