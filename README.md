@@ -8,9 +8,11 @@ Code extension.
 The extension also provides Liquid-aware indentation, code folding, document
 outlines, bracket matching, embedded HTML, CSS, JavaScript, and JSON
 highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
-`{% stylesheet %}` blocks support CSS completion, hover, and diagnostics through
-Shopify's language server. Bundled `{% javascript %}` blocks additionally
-support JavaScript completion, hover, and TypeScript-powered diagnostics.
+`{% stylesheet %}` blocks support CSS completion, hover, diagnostics, local
+custom-property navigation, and selection formatting. Bundled
+`{% javascript %}` blocks support JavaScript completion, hover,
+TypeScript-powered diagnostics, local symbol navigation, and selection
+formatting.
 Schema-derived completion is also available for `section.settings.*` and
 `block.settings.*`, including inline blocks declared by a section. Shopify's
 language server provides modern `{% schema %}` completion and validation for
@@ -63,6 +65,10 @@ retaining checks on open and save.
 
 ## Configure Prettier formatting and Tailwind LSP
 
+The language server formats selections contained in bundled stylesheet and
+JavaScript blocks. Use Shopify's Prettier plugin when formatting the complete
+Liquid document.
+
 ```json
 "lsp": {
   "tailwindcss-language-server": {
@@ -112,8 +118,8 @@ responsive editing over legacy compound asset modes.
       render/block parameter semantics
 - [x] HTML tag autoclosing and linked opening/closing tag editing through
       Shopify's language server
-- [ ] Improve embedded CSS and JavaScript formatting, diagnostics, hover, and
-      navigation while continuing to profile latency and memory use
+- [x] Embedded CSS and JavaScript selection formatting, diagnostics, hover, and
+      local navigation with lazy services and bounded memory
 
 ### Quality
 

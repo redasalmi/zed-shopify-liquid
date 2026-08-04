@@ -23,6 +23,7 @@ const librarySnapshots = new Map();
 let projectVersion = 0;
 let ts;
 let compilerOptions;
+let cssLanguageService;
 let documentRegistry;
 let languageService;
 let liquidDocParamTypesPromise;
@@ -247,9 +248,12 @@ async function definitionForReference(state, offset) {
   };
 }
 
-function embeddedJavaScript(source) {
+function embeddedLanguage(source, tagName) {
   const ranges = [];
-  const pattern = /(?<opening>{%-?\s*javascript\s*-?%})(?<content>[\s\S]*?)(?<closing>{%-?\s*endjavascript\s*-?%})/g;
+  const pattern = new RegExp(
+    `(?<opening>{%-?\\s*${tagName}\\s*-?%})(?<content>[\\s\\S]*?)(?<closing>{%-?\\s*end${tagName}\\s*-?%})`,
+    'g',
+  );
   let match;
 
   while ((match = pattern.exec(source)) !== null) {
@@ -257,9 +261,8 @@ function embeddedJavaScript(source) {
     ranges.push({ start, end: start + match.groups.content.length });
   }
 
-  // Preserve UTF-16 offsets and line endings so TypeScript ranges map directly
-  // back to the Liquid document. Avoid building the virtual source entirely
-  // for the common case where a Liquid file has no JavaScript block.
+  // Preserve UTF-16 offsets and line endings so embedded-service ranges map
+  // directly back to Liquid. Avoid virtual sources when the tag is absent.
   if (ranges.length === 0) return { source: '', ranges };
 
   const segments = [];
@@ -274,8 +277,20 @@ function embeddedJavaScript(source) {
   return { source: segments.join(''), ranges };
 }
 
+function embeddedJavaScript(source) {
+  return embeddedLanguage(source, 'javascript');
+}
+
+function embeddedStylesheet(source) {
+  return embeddedLanguage(source, 'stylesheet');
+}
+
 function containsOffset(ranges, offset) {
   return ranges.some((range) => offset >= range.start && offset <= range.end);
+}
+
+function containsSpan(ranges, start, end) {
+  return ranges.some((range) => start >= range.start && end <= range.end);
 }
 
 function fileNameForUri(uri) {
@@ -361,6 +376,7 @@ function updateState(document) {
   const previous = statesByUri.get(document.uri);
   const source = document.getText();
   const embedded = embeddedJavaScript(source);
+  const stylesheet = embeddedStylesheet(source);
   const schemaSource = schemaSourceForSource(source);
   const scriptChanged = previous
     ? previous.embedded.source !== embedded.source
@@ -369,6 +385,7 @@ function updateState(document) {
   const state = {
     document,
     embedded,
+    stylesheet,
     fileName: previous?.fileName || fileNameForUri(document.uri),
     schema:
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
@@ -445,6 +462,127 @@ function rangeForSpan(document, span) {
     start: document.positionAt(span.start),
     end: document.positionAt(span.start + span.length),
   };
+}
+
+function ensureCssLanguageService() {
+  if (!cssLanguageService) {
+    const { getCSSLanguageService } = require('vscode-css-languageservice');
+    cssLanguageService = getCSSLanguageService();
+  }
+  return cssLanguageService;
+}
+
+function cssDocument(state) {
+  if (!state.cssDocument) {
+    state.cssDocument = TextDocument.create(
+      state.document.uri,
+      'css',
+      state.document.version,
+      state.stylesheet.source,
+    );
+  }
+  return state.cssDocument;
+}
+
+function javascriptDefinitions(state, offset) {
+  if (!containsOffset(state.embedded.ranges, offset)) return null;
+
+  const definitions = ensureLanguageService().getDefinitionAtPosition(state.fileName, offset);
+  if (!definitions) return null;
+
+  const locations = definitions.flatMap((definition) => {
+    const targetState = statesByFileName.get(definition.fileName);
+    const end = definition.textSpan.start + definition.textSpan.length;
+    if (!targetState || !containsSpan(targetState.embedded.ranges, definition.textSpan.start, end)) {
+      return [];
+    }
+    return [
+      {
+        uri: targetState.document.uri,
+        range: rangeForSpan(targetState.document, definition.textSpan),
+      },
+    ];
+  });
+  return locations.length > 0 ? locations : null;
+}
+
+function stylesheetDefinition(state, offset) {
+  if (!containsOffset(state.stylesheet.ranges, offset)) return null;
+
+  const document = cssDocument(state);
+  const service = ensureCssLanguageService();
+  const stylesheet = service.parseStylesheet(document);
+  const definition = service.findDefinition(document, document.positionAt(offset), stylesheet);
+  if (!definition || definition.uri !== state.document.uri) return null;
+
+  const start = document.offsetAt(definition.range.start);
+  const end = document.offsetAt(definition.range.end);
+  return containsSpan(state.stylesheet.ranges, start, end) ? definition : null;
+}
+
+function intersectingRanges(ranges, start, end) {
+  return ranges
+    .map((range) => ({ start: Math.max(range.start, start), end: Math.min(range.end, end) }))
+    .filter((range) => range.start < range.end);
+}
+
+function embeddedRangeFormatting(state, params) {
+  const requestedStart = state.document.offsetAt(params.range.start);
+  const requestedEnd = state.document.offsetAt(params.range.end);
+  const edits = [];
+
+  const scriptRanges = intersectingRanges(state.embedded.ranges, requestedStart, requestedEnd);
+  if (scriptRanges.length > 0) {
+    const service = ensureLanguageService();
+    const options = {
+      ...ts.getDefaultFormatCodeSettings(state.document.getText().includes('\r\n') ? '\r\n' : '\n'),
+      indentSize: params.options.tabSize,
+      tabSize: params.options.tabSize,
+      convertTabsToSpaces: params.options.insertSpaces,
+    };
+    for (const range of scriptRanges) {
+      const changes = service.getFormattingEditsForRange(
+        state.fileName,
+        range.start,
+        range.end,
+        options,
+      );
+      for (const change of changes) {
+        const end = change.span.start + change.span.length;
+        if (containsSpan(state.embedded.ranges, change.span.start, end)) {
+          edits.push({
+            range: rangeForSpan(state.document, change.span),
+            newText: change.newText,
+          });
+        }
+      }
+    }
+  }
+
+  const styleRanges = intersectingRanges(state.stylesheet.ranges, requestedStart, requestedEnd);
+  if (styleRanges.length > 0) {
+    const document = cssDocument(state);
+    const service = ensureCssLanguageService();
+    const source = state.document.getText();
+    for (const range of styleRanges) {
+      while (range.start < range.end && /\s/.test(source[range.start])) range.start += 1;
+      while (range.end > range.start && /\s/.test(source[range.end - 1])) range.end -= 1;
+      if (range.start === range.end) continue;
+
+      const changes = service.format(
+        document,
+        { start: document.positionAt(range.start), end: document.positionAt(range.end) },
+        params.options,
+      );
+      for (const change of changes) {
+        const start = document.offsetAt(change.range.start);
+        const end = document.offsetAt(change.range.end);
+        if (containsSpan(state.stylesheet.ranges, start, end)) edits.push(change);
+      }
+    }
+  }
+
+  return edits;
 }
 
 function completionKind(kind) {
@@ -565,11 +703,12 @@ connection.onInitialize(() => ({
       triggerCharacters: ['.', '"', "'", '{', '@'],
     },
     definitionProvider: true,
+    documentRangeFormattingProvider: true,
     hoverProvider: true,
   },
   serverInfo: {
     name: 'liquid-embedded-support',
-    version: '0.4.0',
+    version: '0.5.0',
   },
 }));
 
@@ -616,7 +755,18 @@ connection.onCompletion(async (params) => {
 connection.onDefinition(async (params) => {
   const state = statesByUri.get(params.textDocument.uri);
   if (!state) return null;
-  return definitionForReference(state, state.document.offsetAt(params.position));
+
+  const offset = state.document.offsetAt(params.position);
+  return (
+    javascriptDefinitions(state, offset) ??
+    stylesheetDefinition(state, offset) ??
+    definitionForReference(state, offset)
+  );
+});
+
+connection.onDocumentRangeFormatting((params) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  return state ? embeddedRangeFormatting(state, params) : [];
 });
 
 connection.onHover((params) => {

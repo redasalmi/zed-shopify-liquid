@@ -130,6 +130,26 @@ approximately 6.5 ms per request on average, about 213 MB active RSS, and about
 60 MB idle RSS before TypeScript was loaded. These figures are development
 measurements rather than cross-platform guarantees.
 
+### Embedded navigation and range formatting
+
+Shopify's language server remains responsible for completion, hover, and
+diagnostics in bundled stylesheet blocks. Its definition provider does not
+expose CSS navigation, and it exposes no document or range formatter. The
+embedded support server therefore supplements only the missing capabilities:
+go-to-definition for local CSS custom properties, go-to-definition for local
+JavaScript symbols, and selection formatting constrained to `{% stylesheet %}`
+and `{% javascript %}` content. Full-document formatting remains delegated to
+Shopify's Prettier plugin so HTML and Liquid are formatted coherently with the
+embedded assets.
+
+CSS and TypeScript services load lazily on the first relevant request, virtual
+documents preserve Liquid source offsets, and formatting edits that escape an
+embedded range are discarded. A local mixed workload of 200 CSS/JavaScript
+definition and formatting requests averaged about 0.85 ms per request. RSS was
+about 64 MB before either service loaded, 211 MB after warm-up, and 217 MB after
+the run under the existing 128 MB V8 old-generation limit. These are local
+development measurements rather than cross-platform guarantees.
+
 ### Schema-derived setting completion — `0.12.0`
 
 Shopify's server returns local `section.settings.*` properties in section files
@@ -208,8 +228,9 @@ points in Zed's extension work directory:
    Theme Check behavior.
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
    inline section-block setting completion, paired-brace LiquidDoc parameter
-   type completion, and static file definitions, and owns JavaScript completion,
-   hover, and diagnostics inside bundled JavaScript tags.
+   type completion, static file definitions, embedded range formatting, and
+   local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
+   diagnostics inside bundled JavaScript tags.
 
 The extension is currently version `0.16.0` and uses Zed extension API `0.7.0`.
 
@@ -230,10 +251,12 @@ capture colors or structural indentation.
 
 ### Formatting
 
-`prettier_parser_name = "liquid-html"` delegates formatting to Prettier when the
-project has `@shopify/prettier-plugin-liquid` configured. Shopify's plugin
-formats embedded stylesheet and JavaScript blocks. Tailwind formatting and
-completion remain user-configurable because they depend on each theme's build
+`prettier_parser_name = "liquid-html"` delegates full-document formatting to
+Prettier when the project has `@shopify/prettier-plugin-liquid` configured.
+Shopify's plugin formats embedded stylesheet and JavaScript blocks. The embedded
+support server separately provides range formatting when a selection intersects
+those blocks. Tailwind formatting and completion remain user-configurable
+because they depend on each theme's build
 setup.
 
 ## Design decisions

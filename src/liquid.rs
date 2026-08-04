@@ -241,7 +241,8 @@ mod tests {
 
     #[test]
     fn embedded_server_scopes_semantic_features_to_supported_regions() {
-        assert!(EMBEDDED_SERVER.contains("javascript\\s*-?%}"));
+        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript')"));
+        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet')"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
@@ -255,6 +256,10 @@ mod tests {
         );
         assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
         assert!(EMBEDDED_SERVER.contains("definitionForReference"));
+        assert!(EMBEDDED_SERVER.contains("javascriptDefinitions"));
+        assert!(EMBEDDED_SERVER.contains("stylesheetDefinition"));
+        assert!(EMBEDDED_SERVER.contains("embeddedRangeFormatting"));
+        assert!(EMBEDDED_SERVER.contains("vscode-css-languageservice"));
         assert!(EMBEDDED_SERVER.contains("toTolerantLiquidHtmlAST"));
         assert!(EMBEDDED_SERVER.contains("pathToFileURL(candidate)"));
     }
