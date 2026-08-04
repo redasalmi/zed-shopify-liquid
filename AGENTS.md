@@ -60,6 +60,7 @@ change, use the applicable subset of:
 cargo fmt --check
 cargo test
 node --check language-server/embedded-javascript-server.cjs
+npm run test:lsp
 cargo build --release --target wasm32-wasip1
 git diff --check
 ```

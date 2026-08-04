@@ -191,6 +191,7 @@ mod tests {
     use super::*;
 
     const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
+    const TEST_PACKAGE: &str = include_str!("../package.json");
 
     #[test]
     fn wrapper_starts_the_official_language_server_directly() {
@@ -237,6 +238,16 @@ mod tests {
     fn package_entry_matches_the_wrapper_dependency() {
         assert!(SERVER_PATH.ends_with("/dist/index.js"));
         assert!(SERVER_WRAPPER.contains(SERVER_PATH));
+    }
+
+    #[test]
+    fn protocol_test_dependencies_match_runtime_packages() {
+        let package: serde_json::Value = serde_json::from_str(TEST_PACKAGE).unwrap();
+        assert_eq!(package["devDependencies"][PACKAGE_NAME], PACKAGE_VERSION);
+        assert_eq!(
+            package["devDependencies"][TYPESCRIPT_PACKAGE_NAME],
+            TYPESCRIPT_PACKAGE_VERSION
+        );
     }
 
     #[test]

@@ -123,11 +123,15 @@ responsive editing over legacy compound asset modes.
 
 ### Quality
 
-- [ ] Add query regression fixtures for highlighting, indentation, injections,
-      folding, and outlines
-- [ ] Add black-box language-server tests for diagnostics, completion, hover,
-      links, and embedded assets
-- [ ] Consider contributing generally useful grammar improvements upstream
+- [x] Black-box protocol tests for extension-owned language-server behavior and
+      a minimal Shopify integration smoke suite
+- [ ] Add curated query regression fixtures for highlighting, injections,
+      indentation, folding, and outlines
+- [ ] Add a repeatable embedded-server stress test for memory and stale-state
+      regressions
+
+Generally useful grammar changes should be contributed upstream when practical;
+Shopify- or Zed-specific behavior remains local.
 
 Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy
 files remain usable as Liquid, but new work focuses on bundled assets and modern
@@ -135,6 +139,13 @@ theme architecture. Platform-controlled settings remain Shopify-owned theme
 JSON data; the extension does not duplicate unsupported JSON semantics.
 
 ## Development
+
+Install the pinned test dependencies and run the language-server protocol suite:
+
+```sh
+npm ci --ignore-scripts
+npm run test:lsp
+```
 
 See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
 comparison with the pre-overhaul extension, completed work, design decisions,

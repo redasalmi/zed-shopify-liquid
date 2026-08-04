@@ -216,6 +216,23 @@ default, so the extension delegates both features to Shopify without adding a
 second parser or provider. Users can still override Zed's `use_on_type_format`
 or `linked_edits` settings.
 
+### Language-server protocol contracts
+
+A persistent Node test harness now launches both language servers over stdio,
+implements the client-side workspace requests they require, and exercises them
+against temporary Shopify theme roots. The embedded-server suite covers inline
+block settings, LiquidDoc tags and paired-brace types, JavaScript completion,
+hover, diagnostics and definitions, CSS custom-property definitions, embedded
+range boundaries, static Liquid file definitions, and nearest-theme-root
+isolation. A deliberately small Shopify smoke suite checks the pinned server's
+capabilities plus representative completion, hover, diagnostics, document
+links, HTML autoclosing, and linked tag editing without duplicating Shopify's
+provider-level test suite.
+
+The test dependencies pin the same Shopify server and TypeScript versions used
+by the extension. `npm run test:lsp` is the deterministic integration command;
+Zed remains the final host-level check.
+
 ## Current architecture
 
 ### Extension host
