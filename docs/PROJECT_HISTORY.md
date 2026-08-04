@@ -181,7 +181,7 @@ points in Zed's extension work directory:
    type completion, and static file definitions, and owns JavaScript completion,
    hover, and diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.13.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.14.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 
