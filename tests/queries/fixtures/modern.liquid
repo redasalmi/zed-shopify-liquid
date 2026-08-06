@@ -32,6 +32,16 @@ title: Query fixture
 const banner = document.querySelector('.product-card');
 {% endjavascript %}
 
+{% if product.available %}
+  {% if product.available %}
+    {% if product.available %}
+      {% style %}
+.deep-button { color: blue; }
+      {% endstyle %}
+    {% endif %}
+  {% endif %}
+{% endif %}
+
 {% schema %}
 {"name":"Product card","settings":[]}
 {% endschema %}

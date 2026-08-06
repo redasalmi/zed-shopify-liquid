@@ -36,7 +36,8 @@ incrementally by the original maintainers.
 - Corrected workspace configuration so `themeCheck.*` remains at the root.
 - Added initialization-options passthrough.
 - Removed panic-prone startup handling.
-- Retained an existing usable server when an update fails.
+- Retained existing usable server and TypeScript installations when an update
+  fails.
 - Added Rust coverage for startup, package paths, configuration, and failure
   handling.
 
@@ -102,6 +103,8 @@ hyphenated Liquid queries usable.
   hover, syntactic diagnostics, and semantic diagnostics.
 - Preserved source offsets by masking non-JavaScript content in virtual
   documents.
+- Uses Shopify's tolerant Liquid parser to identify raw tag bodies, avoiding
+  embedded providers inside comments, raw content, and documentation examples.
 - Restricted results and diagnostics to JavaScript block ranges.
 - Added support for whitespace-trimmed JavaScript delimiters.
 - Pinned TypeScript `5.9.3`; TypeScript 7's current CommonJS package does not
@@ -130,9 +133,10 @@ approximately 6.5 ms per request on average, about 213 MB active RSS, and about
 60 MB idle RSS before TypeScript was loaded. These figures are development
 measurements rather than cross-platform guarantees.
 
-Subsequent hardening added per-document snapshot caching, exact structural
-change detection, lazy reusable JavaScript and CSS virtual documents, and idle
-TypeScript disposal with lazy recreation. Current budgets and workloads live in
+Subsequent hardening added per-document snapshot caching, embedded-range and
+inter-block separator change detection that ignores unrelated prefix/suffix
+edits, lazy reusable JavaScript and CSS virtual documents, and idle TypeScript
+disposal with lazy recreation. Current budgets and workloads live in
 [`PERFORMANCE.md`](PERFORMANCE.md).
 
 ### Embedded navigation and range formatting
@@ -292,7 +296,7 @@ points in Zed's extension work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.21.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.22.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

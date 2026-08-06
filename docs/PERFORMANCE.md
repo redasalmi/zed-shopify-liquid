@@ -30,8 +30,9 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 2. Load TypeScript and CSS services only on the first relevant request.
 3. Debounce TypeScript diagnostics while preserving immediate completions.
 4. Cache standard-library and per-document script snapshots.
-5. Compare compact, exact embedded-source structure before invalidating the
-   TypeScript project.
+5. Compare embedded ranges, content, and inter-block separators before
+   invalidating the TypeScript project; ignore unrelated prefix and suffix
+   edits.
 6. Materialize full-length JavaScript and CSS virtual documents only when a
    service requests them, then reuse unchanged sources and CSS documents.
 7. Dispose TypeScript programs, document registries, and library snapshots 30

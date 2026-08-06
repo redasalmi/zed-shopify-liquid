@@ -100,10 +100,21 @@ function fileSupportsLiquidDoc(fileName) {
 }
 
 function isInsideLiquidDoc(source, offset) {
+  const rawTags = rawTagNodes(source);
+  const ignoredRanges = rawTags
+    .filter((node) => node.name !== 'doc')
+    .map((node) => node.position);
   const tagPattern = /{%-?\s*(end)?doc\s*-?%}/g;
   let active = false;
   let match;
   while ((match = tagPattern.exec(source)) !== null && match.index < offset) {
+    if (
+      ignoredRanges.some(
+        (range) => match.index >= range.start && match.index < range.end,
+      )
+    ) {
+      continue;
+    }
     active = !match[1];
   }
   return active;
@@ -174,6 +185,31 @@ async function liquidDocTypeCompletions(state, offset) {
 function ensureLiquidParser() {
   if (!liquidParser) liquidParser = require('@shopify/liquid-html-parser');
   return liquidParser;
+}
+
+function rawTagNodes(source) {
+  if (!/{%-?\s*(?:comment|raw|doc|javascript|stylesheet|schema)\b/.test(source)) {
+    return [];
+  }
+
+  const nodes = [];
+  try {
+    const { NodeTypes, toTolerantLiquidHtmlAST, walk } = ensureLiquidParser();
+    const ast = toTolerantLiquidHtmlAST(source);
+    walk(ast, (node) => {
+      if (
+        node.type === NodeTypes.LiquidRawTag &&
+        typeof node.name === 'string' &&
+        node.body?.position
+      ) {
+        nodes.push(node);
+      }
+    });
+  } catch (_error) {
+    // Incomplete documents can still fail tolerant parsing. Semantic providers
+    // should not treat arbitrary text as an embedded language in that case.
+  }
+  return nodes;
 }
 
 function referencesInSource(source) {
@@ -257,55 +293,47 @@ async function definitionForReference(state, offset) {
   };
 }
 
-function lineBreakOffsets(source) {
-  const offsets = [];
-  const pattern = /[\r\n]/g;
-  let match;
-  while ((match = pattern.exec(source)) !== null) {
-    offsets.push(match.index * 2 + (match[0] === '\r' ? 1 : 0));
-  }
-  return offsets;
-}
-
-function embeddedLanguage(source, tagName) {
-  const ranges = [];
-  const pattern = new RegExp(
-    `(?<opening>{%-?\\s*${tagName}\\s*-?%})(?<content>[\\s\\S]*?)(?<closing>{%-?\\s*end${tagName}\\s*-?%})`,
-    'g',
-  );
-  let match;
-
-  while ((match = pattern.exec(source)) !== null) {
-    const start = match.index + match.groups.opening.length;
-    ranges.push({ start, end: start + match.groups.content.length });
+function embeddedLanguage(source, tagName, rawTags) {
+  const ranges = rawTags
+    .filter((node) => node.name === tagName)
+    .map((node) => ({
+      start: node.body.position.start,
+      end: node.body.position.end,
+    }));
+  const separators = [];
+  for (let index = 1; index < ranges.length; index += 1) {
+    separators.push(
+      source
+        .slice(ranges[index - 1].end, ranges[index].start)
+        .replace(/[^\r\n]/g, ' '),
+    );
   }
 
-  // Preserve UTF-16 offsets and line endings so embedded-service ranges map
-  // directly back to Liquid. Materialize the full-length virtual document only
-  // when a language service needs it.
+  // Shopify's parser knows which Liquid raw tags own their bodies, so tags in
+  // comments, raw content, and documentation examples cannot become false
+  // embedded-language regions. Preserve UTF-16 offsets and line endings so
+  // virtual-service ranges map directly back to Liquid.
   return {
     documentSource: ranges.length > 0 ? source : null,
-    lineBreaks: null,
     source: ranges.length > 0 ? null : '',
     ranges,
+    separators,
   };
 }
 
-function embeddedJavaScript(source) {
-  return embeddedLanguage(source, 'javascript');
+function embeddedJavaScript(source, rawTags) {
+  return embeddedLanguage(source, 'javascript', rawTags);
 }
 
-function embeddedStylesheet(source) {
-  return embeddedLanguage(source, 'stylesheet');
+function embeddedStylesheet(source, rawTags) {
+  return embeddedLanguage(source, 'stylesheet', rawTags);
 }
 
 function sameEmbeddedLanguage(left, right) {
-  if (left.documentSource?.length !== right.documentSource?.length) return false;
   if (left.ranges.length !== right.ranges.length) return false;
-  if (left.ranges.length === 0) return true;
-  if (left.lineBreaks.length !== right.lineBreaks.length) return false;
-  for (let index = 0; index < left.lineBreaks.length; index += 1) {
-    if (left.lineBreaks[index] !== right.lineBreaks[index]) return false;
+  if (left.separators.length !== right.separators.length) return false;
+  for (let index = 0; index < left.separators.length; index += 1) {
+    if (left.separators[index] !== right.separators[index]) return false;
   }
   return left.ranges.every((range, index) => {
     const candidate = right.ranges[index];
@@ -350,9 +378,10 @@ function fileNameForUri(uri) {
   }
 }
 
-function schemaSourceForSource(source) {
-  const match = /{%-?\s*schema\s*-?%}([\s\S]*?){%-?\s*endschema\s*-?%}/.exec(source);
-  return match?.[1] ?? null;
+function schemaSourceForSource(source, rawTags = rawTagNodes(source)) {
+  const schema = rawTags.find((node) => node.name === 'schema');
+  if (!schema?.body?.position) return null;
+  return source.slice(schema.body.position.start, schema.body.position.end);
 }
 
 function parseSchema(source) {
@@ -424,15 +453,10 @@ function settingsCompletions(state, offset) {
 function updateState(document) {
   const previous = statesByUri.get(document.uri);
   const source = document.getText();
-  const embedded = embeddedJavaScript(source);
-  const stylesheet = embeddedStylesheet(source);
-  const lineBreaks =
-    embedded.ranges.length > 0 || stylesheet.ranges.length > 0
-      ? lineBreakOffsets(source)
-      : [];
-  embedded.lineBreaks = lineBreaks;
-  stylesheet.lineBreaks = lineBreaks;
-  const schemaSource = schemaSourceForSource(source);
+  const rawTags = rawTagNodes(source);
+  const embedded = embeddedJavaScript(source, rawTags);
+  const stylesheet = embeddedStylesheet(source, rawTags);
+  const schemaSource = schemaSourceForSource(source, rawTags);
   const scriptChanged = previous
     ? !sameEmbeddedLanguage(previous.embedded, embedded)
     : embedded.ranges.length > 0;

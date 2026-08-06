@@ -80,6 +80,7 @@ test('injection captures preserve embedded language boundaries', () => {
     contains: true,
   });
   assertCapture(captures, 'injection.content', '.button { color: red; }', { contains: true });
+  assertCapture(captures, 'injection.content', '.deep-button { color: blue; }', { contains: true });
   assertCapture(captures, 'injection.content', 'document.querySelector', { contains: true });
   assertCapture(captures, 'injection.content', '"settings":[]', { contains: true });
 

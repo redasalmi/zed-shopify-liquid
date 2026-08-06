@@ -23,6 +23,60 @@ function locationUri(result) {
   return (Array.isArray(result) ? result[0] : result)?.uri;
 }
 
+test('raw Liquid content does not activate embedded providers', { timeout: 10_000 }, async () => {
+  const source = `{% comment %}
+{% javascript %}
+const broken = ;
+{% endjavascript %}
+{% schema %}
+{
+  "blocks": [{ "type": "fake", "settings": [{ "id": "should_not_complete" }] }]
+}
+{% endschema %}
+{% doc %}
+@
+{% enddoc %}
+{% endcomment %}
+{{ block.settings. }}
+`;
+  const theme = await createTheme({ 'sections/raw-content.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      textDocument: { completion: {}, publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('sections/raw-content.liquid'), source);
+    const settings = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('block.settings.') + 'block.settings.'.length),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert.equal(settings, null);
+
+    const tags = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('@\n') + 1),
+      context: { triggerKind: 2, triggerCharacter: '@' },
+    });
+    assert.equal(tags, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert(
+      !client.notifications.some(
+        (message) =>
+          message.method === 'textDocument/publishDiagnostics' &&
+          message.params?.uri === uri &&
+          message.params.diagnostics.some((diagnostic) => /Expression expected/.test(diagnostic.message)),
+      ),
+      'raw Liquid content must not produce embedded diagnostics',
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('embedded support server protocol contracts', { timeout: 60_000 }, async () => {
   const settingsSource = `{{ block.settings. }}
 {% schema %}

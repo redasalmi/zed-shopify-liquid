@@ -18,6 +18,7 @@ const EMBEDDED_SERVER_ID: &str = "liquid-embedded-javascript";
 const EMBEDDED_SERVER_PATH: &str = "run-liquid-embedded-javascript-server.cjs";
 const EMBEDDED_NODE_HEAP_ARG: &str = "--max-old-space-size=128";
 const TYPESCRIPT_PACKAGE_NAME: &str = "typescript";
+const TYPESCRIPT_SERVER_PATH: &str = "node_modules/typescript/lib/typescript.js";
 // TypeScript 7 currently exposes only its native CLI from CommonJS; the
 // embedded language server requires the stable JavaScript language-service API.
 const TYPESCRIPT_PACKAGE_VERSION: &str = "5.9.3";
@@ -35,6 +36,10 @@ startServer();
 impl LiquidExtension {
     fn server_exists(&self) -> bool {
         fs::metadata(SERVER_PATH).is_ok_and(|stat| stat.is_file())
+    }
+
+    fn typescript_exists(&self) -> bool {
+        fs::metadata(TYPESCRIPT_SERVER_PATH).is_ok_and(|stat| stat.is_file())
     }
 
     fn server_script_path(&mut self, language_server_id: &zed::LanguageServerId) -> Result<String> {
@@ -92,12 +97,30 @@ impl LiquidExtension {
 
         if !self.did_find_typescript {
             let installed_version = zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
-            if installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION) {
+            if !self.typescript_exists()
+                || installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION)
+            {
                 zed::set_language_server_installation_status(
                     language_server_id,
                     &zed::LanguageServerInstallationStatus::Downloading,
                 );
-                zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, TYPESCRIPT_PACKAGE_VERSION)?;
+
+                if let Err(error) =
+                    zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, TYPESCRIPT_PACKAGE_VERSION)
+                {
+                    // Keep an older usable TypeScript installation when an
+                    // update fails while offline. Embedded support is better
+                    // than disabling the second language server entirely.
+                    if !self.typescript_exists() {
+                        return Err(error);
+                    }
+                }
+            }
+
+            if !self.typescript_exists() {
+                return Err(format!(
+                    "installed package '{TYPESCRIPT_PACKAGE_NAME}' did not contain expected path '{TYPESCRIPT_SERVER_PATH}'",
+                ));
             }
             self.did_find_typescript = true;
         }
@@ -266,8 +289,10 @@ mod tests {
 
     #[test]
     fn embedded_server_scopes_semantic_features_to_supported_regions() {
-        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript')"));
-        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet')"));
+        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript', rawTags)"));
+        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet', rawTags)"));
+        assert!(EMBEDDED_SERVER.contains("function rawTagNodes(source)"));
+        assert!(EMBEDDED_SERVER.contains("separators"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
@@ -292,6 +317,7 @@ mod tests {
     #[test]
     fn embedded_server_uses_stable_typescript_language_service() {
         assert_eq!(TYPESCRIPT_PACKAGE_VERSION, "5.9.3");
+        assert!(TYPESCRIPT_SERVER_PATH.ends_with("/lib/typescript.js"));
         assert!(EMBEDDED_SERVER.contains("ts.createLanguageService"));
         assert!(EMBEDDED_SERVER.contains("One incremental service is shared"));
         assert_eq!(EMBEDDED_NODE_HEAP_ARG, "--max-old-space-size=128");
