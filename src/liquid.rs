@@ -289,10 +289,17 @@ mod tests {
 
     #[test]
     fn embedded_server_scopes_semantic_features_to_supported_regions() {
-        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript', rawTags)"));
-        assert!(EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet', rawTags)"));
+        assert!(
+            EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript', rawTags, enabled)")
+        );
+        assert!(
+            EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet', rawTags, enabled)")
+        );
+        assert!(EMBEDDED_SERVER.contains("EMBEDDED_THEME_DIRECTORIES"));
+        assert!(EMBEDDED_SERVER.contains("slice(0, 1)"));
+        assert!(EMBEDDED_SERVER.contains("(function(){"));
+        assert!(EMBEDDED_SERVER.contains("configuredThemeRootForFile"));
         assert!(EMBEDDED_SERVER.contains("function rawTagNodes(source)"));
-        assert!(EMBEDDED_SERVER.contains("separators"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
@@ -305,6 +312,8 @@ mod tests {
             EMBEDDED_SERVER.contains("@shopify/theme-language-server-common/dist/utils/liquidDoc")
         );
         assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
+        assert!(EMBEDDED_SERVER.contains("`${name}[]`"));
+        assert!(EMBEDDED_SERVER.contains("textEdit"));
         assert!(EMBEDDED_SERVER.contains("definitionForReference"));
         assert!(EMBEDDED_SERVER.contains("javascriptDefinitions"));
         assert!(EMBEDDED_SERVER.contains("stylesheetDefinition"));
@@ -312,6 +321,11 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("vscode-css-languageservice"));
         assert!(EMBEDDED_SERVER.contains("toTolerantLiquidHtmlAST"));
         assert!(EMBEDDED_SERVER.contains("pathToFileURL(candidate)"));
+    }
+
+    #[test]
+    fn official_server_is_attached_to_theme_json() {
+        assert!(EXTENSION_MANIFEST.contains("languages = [\"Liquid\", \"JSON\"]"));
     }
 
     #[test]

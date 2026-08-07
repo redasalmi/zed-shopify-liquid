@@ -1,6 +1,6 @@
 id = "liquid"
 name = "Liquid"
-version = "0.22.0"
+version = "0.23.0"
 schema_version = 1
 authors = ["Jeffrey Guenther <guenther.jeffrey@gmail.com>"]
 description = "Shopify Liquid support"
@@ -12,7 +12,7 @@ commit = "e229daeca9b64337451e02db52b1b92da77961b2"
 
 [language_servers.liquid]
 name = "Shopify Theme Language Server"
-languages = ["Liquid"]
+languages = ["Liquid", "JSON"]
 
 [language_servers.liquid-embedded-javascript]
 name = "Liquid Embedded Support"

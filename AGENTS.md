@@ -2,9 +2,10 @@
 
 ## Purpose
 
-Maintain fast, reliable Shopify Liquid support for Zed, using Shopify Theme
-Tools and Shopify's VS Code extension as behavioral references. Prioritize the
-current Theme Blocks architecture rather than legacy compound asset modes.
+Maintain fast, reliable Shopify Liquid support for Zed, using [Shopify Theme
+Tools and its VS Code extension](https://github.com/Shopify/theme-tools) as
+behavioral references. Prioritize the current Theme Blocks architecture rather
+than legacy compound asset modes.
 
 Read [`docs/PROJECT_HISTORY.md`](docs/PROJECT_HISTORY.md) before substantial
 changes. It records the baseline, implemented work, architecture, and important
@@ -13,13 +14,14 @@ decisions. Keep it updated when a change materially alters behavior or design.
 ## Related repositories and fixtures
 
 - Extension: this repository
-- Shopify reference: `../theme-tools`
+- Shopify Theme Tools and VS Code reference: https://github.com/Shopify/theme-tools
 - Shopify-focused grammar checkout: `grammars/liquid` (a separate Git repository)
 - Grammar fork: `https://github.com/redasalmi/tree-sitter-liquid`
 - Grammar upstream: `https://github.com/hankthetank27/tree-sitter-liquid`
-- Representative modern theme: `../../moen-theme`
+- Extension fixtures: `tests/queries/fixtures` and `tests/language-server`
 
-Do not use the obsolete duplicate at `/home/reda/Desktop/test/zed-shopify-liquid`.
+There is no required local Theme Tools or representative-theme checkout; use
+Shopify's repository and the checked-in fixtures above.
 
 ## Architecture and constraints
 

@@ -55,6 +55,7 @@ const THEME_DIRECTORIES = new Set([
   'snippets',
   'templates',
 ]);
+const EMBEDDED_THEME_DIRECTORIES = new Set(['blocks', 'sections', 'snippets']);
 
 async function readLiquidDocObjects() {
   const docsUpdater = require('@shopify/theme-check-docs-updater');
@@ -88,7 +89,15 @@ function liquidDocParamTypes() {
           types.set(object.name, object.summary || object.description);
         }
       }
-      return types;
+      const arrayTypes = new Map(
+        [...types].map(([name, description]) => [
+          `${name}[]`,
+          description
+            ? `Array of ${name} values.\n\n${description}`
+            : `Array of ${name} values.`,
+        ]),
+      );
+      return new Map([...types, ...arrayTypes]);
     });
   }
   return liquidDocParamTypesPromise;
@@ -97,6 +106,10 @@ function liquidDocParamTypes() {
 function fileSupportsLiquidDoc(fileName) {
   const normalized = fileName.replace(/\\/g, '/');
   return normalized.includes('/snippets/') || normalized.includes('/blocks/');
+}
+
+function fileSupportsEmbeddedAssets(fileName) {
+  return EMBEDDED_THEME_DIRECTORIES.has(path.basename(path.dirname(fileName)));
 }
 
 function isInsideLiquidDoc(source, offset) {
@@ -121,7 +134,12 @@ function isInsideLiquidDoc(source, offset) {
 }
 
 function liquidDocTagCompletions(state, offset, context) {
-  if (context?.triggerCharacter !== '@' || !fileSupportsLiquidDoc(state.fileName)) return null;
+  if (
+    context?.triggerCharacter !== '@' ||
+    !fileSupportsLiquidDoc(state.sourceFileName || state.fileName)
+  ) {
+    return null;
+  }
 
   const source = state.document.getText();
   if (!isInsideLiquidDoc(source, offset)) return null;
@@ -154,20 +172,23 @@ function liquidDocTagCompletions(state, offset, context) {
 }
 
 async function liquidDocTypeCompletions(state, offset) {
-  if (!fileSupportsLiquidDoc(state.fileName)) return null;
+  if (!fileSupportsLiquidDoc(state.sourceFileName || state.fileName)) return null;
 
   const source = state.document.getText();
   if (!isInsideLiquidDoc(source, offset)) return null;
 
   const beforeCursor = source.slice(0, offset);
   const currentLine = beforeCursor.slice(beforeCursor.lastIndexOf('\n') + 1);
-  if (!/^\s*@param\s+\{\s*[a-zA-Z_]*$/.test(currentLine)) return null;
+  const typeMatch = /^(\s*@param\s+\{\s*)([a-zA-Z_]*(?:\[\]?)?)$/.exec(currentLine);
+  if (!typeMatch) return null;
 
   // Shopify's provider handles an unfinished opening brace. Supplement the
   // paired-brace form produced by Zed's autoclose behavior.
   if (!/^\s*\}/.test(source.slice(offset))) return null;
 
   const types = await liquidDocParamTypes();
+  const partial = typeMatch[2];
+  const partialStart = offset - partial.length;
   return {
     isIncomplete: false,
     items: [...types].map(([label, description]) => {
@@ -175,6 +196,13 @@ async function liquidDocTypeCompletions(state, offset) {
         label,
         kind: CompletionItemKind.EnumMember,
         detail: 'LiquidDoc parameter type',
+        textEdit: {
+          range: {
+            start: state.document.positionAt(partialStart),
+            end: state.document.positionAt(offset),
+          },
+          newText: label,
+        },
       };
       if (description) item.documentation = { kind: 'markdown', value: description };
       return item;
@@ -250,7 +278,37 @@ function referencesInSource(source) {
   return references;
 }
 
-function themeRootForFile(fileName) {
+function configuredThemeRoot(contents) {
+  const match = /^\s*root\s*:\s*(?:"([^"]*)"|'([^']*)'|([^#\r\n]*))\s*(?:#.*)?$/m.exec(
+    contents,
+  );
+  if (!match) return null;
+  const value = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+  if (!value || value === '~' || value.toLowerCase() === 'null') return null;
+  return value;
+}
+
+async function configuredThemeRootForFile(fileName) {
+  let directory = path.dirname(fileName);
+  while (true) {
+    try {
+      const contents = await fs.readFile(path.join(directory, '.theme-check.yml'), 'utf8');
+      const root = configuredThemeRoot(contents);
+      if (root) return path.resolve(directory, root);
+    } catch (_error) {
+      // Continue toward the workspace root when this directory has no config.
+    }
+
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+async function themeRootForFile(fileName) {
+  const configuredRoot = await configuredThemeRootForFile(fileName);
+  if (configuredRoot) return configuredRoot;
+
   let directory = path.dirname(fileName);
   while (true) {
     if (THEME_DIRECTORIES.has(path.basename(directory))) return path.dirname(directory);
@@ -271,7 +329,7 @@ async function definitionForReference(state, offset) {
 
   let root;
   try {
-    root = themeRootForFile(fileURLToPath(state.document.uri));
+    root = await themeRootForFile(fileURLToPath(state.document.uri));
   } catch (_error) {
     return null;
   }
@@ -293,22 +351,18 @@ async function definitionForReference(state, offset) {
   };
 }
 
-function embeddedLanguage(source, tagName, rawTags) {
-  const ranges = rawTags
-    .filter((node) => node.name === tagName)
-    .map((node) => ({
+function embeddedLanguage(source, tagName, rawTags, enabled = true) {
+  // Shopify allows one bundled asset tag of each kind per file. Analyze only
+  // the first one so invalid duplicate tags cannot be merged into one virtual
+  // program or stylesheet with misleading cross-block semantics.
+  const ranges = (enabled ? rawTags.filter((node) => node.name === tagName).slice(0, 1) : []).map(
+    (node) => ({
       start: node.body.position.start,
       end: node.body.position.end,
-    }));
-  const separators = [];
-  for (let index = 1; index < ranges.length; index += 1) {
-    separators.push(
-      source
-        .slice(ranges[index - 1].end, ranges[index].start)
-        .replace(/[^\r\n]/g, ' '),
-    );
-  }
-
+      containerStart: node.position.start,
+      containerEnd: node.position.end,
+    }),
+  );
   // Shopify's parser knows which Liquid raw tags own their bodies, so tags in
   // comments, raw content, and documentation examples cannot become false
   // embedded-language regions. Preserve UTF-16 offsets and line endings so
@@ -317,24 +371,20 @@ function embeddedLanguage(source, tagName, rawTags) {
     documentSource: ranges.length > 0 ? source : null,
     source: ranges.length > 0 ? null : '',
     ranges,
-    separators,
+    wrapInFunction: tagName === 'javascript',
   };
 }
 
-function embeddedJavaScript(source, rawTags) {
-  return embeddedLanguage(source, 'javascript', rawTags);
+function embeddedJavaScript(source, rawTags, enabled) {
+  return embeddedLanguage(source, 'javascript', rawTags, enabled);
 }
 
-function embeddedStylesheet(source, rawTags) {
-  return embeddedLanguage(source, 'stylesheet', rawTags);
+function embeddedStylesheet(source, rawTags, enabled) {
+  return embeddedLanguage(source, 'stylesheet', rawTags, enabled);
 }
 
 function sameEmbeddedLanguage(left, right) {
   if (left.ranges.length !== right.ranges.length) return false;
-  if (left.separators.length !== right.separators.length) return false;
-  for (let index = 0; index < left.separators.length; index += 1) {
-    if (left.separators[index] !== right.separators[index]) return false;
-  }
   return left.ranges.every((range, index) => {
     const candidate = right.ranges[index];
     if (range.start !== candidate.start || range.end !== candidate.end) return false;
@@ -347,17 +397,47 @@ function sameEmbeddedLanguage(left, right) {
   });
 }
 
+function maskSource(source) {
+  return source.replace(/[^\r\n]/g, ' ');
+}
+
+function injectAtStart(source, text) {
+  const masked = maskSource(source);
+  return text.length <= masked.length ? text + masked.slice(text.length) : masked;
+}
+
+function injectAtEnd(source, text) {
+  const masked = maskSource(source);
+  return text.length <= masked.length
+    ? masked.slice(0, masked.length - text.length) + text
+    : masked;
+}
+
 function embeddedSource(embedded) {
   if (embedded.source !== null) return embedded.source;
 
   const segments = [];
   let cursor = 0;
   for (const range of embedded.ranges) {
-    segments.push(embedded.documentSource.slice(cursor, range.start).replace(/[^\r\n]/g, ' '));
-    segments.push(embedded.documentSource.slice(range.start, range.end));
-    cursor = range.end;
+    segments.push(maskSource(embedded.documentSource.slice(cursor, range.containerStart)));
+    const opening = embedded.documentSource.slice(range.containerStart, range.start);
+    const body = embedded.documentSource.slice(range.start, range.end);
+    const closing = embedded.documentSource.slice(range.end, range.containerEnd);
+    if (embedded.wrapInFunction) {
+      // Shopify evaluates bundled JavaScript inside an anonymous function. The
+      // injected tokens replace masked tag characters one-for-one, preserving
+      // every source offset used by TypeScript and the LSP.
+      segments.push(injectAtStart(opening, '(function(){'));
+      segments.push(body);
+      segments.push(injectAtEnd(closing, '})()'));
+    } else {
+      segments.push(maskSource(opening));
+      segments.push(body);
+      segments.push(maskSource(closing));
+    }
+    cursor = range.containerEnd;
   }
-  segments.push(embedded.documentSource.slice(cursor).replace(/[^\r\n]/g, ' '));
+  segments.push(maskSource(embedded.documentSource.slice(cursor)));
   embedded.source = segments.join('');
   return embedded.source;
 }
@@ -412,7 +492,7 @@ function settingsCompletions(state, offset) {
 
   const objectName = match[1];
   const partial = match[2];
-  const pathName = state.fileName.replace(/\\/g, '/');
+  const pathName = (state.sourceFileName || state.fileName).replace(/\\/g, '/');
   let settings = [];
 
   // Shopify's server already completes section settings and settings in Theme
@@ -454,8 +534,15 @@ function updateState(document) {
   const previous = statesByUri.get(document.uri);
   const source = document.getText();
   const rawTags = rawTagNodes(source);
-  const embedded = embeddedJavaScript(source, rawTags);
-  const stylesheet = embeddedStylesheet(source, rawTags);
+  let sourceFileName;
+  try {
+    sourceFileName = fileURLToPath(document.uri);
+  } catch (_error) {
+    sourceFileName = document.uri;
+  }
+  const supportsEmbeddedAssets = fileSupportsEmbeddedAssets(sourceFileName);
+  const embedded = embeddedJavaScript(source, rawTags, supportsEmbeddedAssets);
+  const stylesheet = embeddedStylesheet(source, rawTags, supportsEmbeddedAssets);
   const schemaSource = schemaSourceForSource(source, rawTags);
   const scriptChanged = previous
     ? !sameEmbeddedLanguage(previous.embedded, embedded)
@@ -470,6 +557,7 @@ function updateState(document) {
     document,
     embedded,
     stylesheet,
+    sourceFileName,
     fileName: previous?.fileName || fileNameForUri(document.uri),
     schema:
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),

@@ -77,6 +77,66 @@ const broken = ;
   }
 });
 
+test('embedded providers stay disabled outside Shopify bundled-asset directories', { timeout: 10_000 }, async () => {
+  const source = `{% javascript %}\nconst broken = ;\n{% endjavascript %}`;
+  const theme = await createTheme({ 'layout/theme.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      textDocument: { completion: {}, publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('layout/theme.liquid'), source);
+    const completion = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('broken')),
+      context: { triggerKind: 1 },
+    });
+    assert.equal(completion, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert(
+      !client.notifications.some(
+        (message) =>
+          message.method === 'textDocument/publishDiagnostics' &&
+          message.params?.uri === uri &&
+          message.params.diagnostics.some((diagnostic) => diagnostic.source === 'typescript'),
+      ),
+      'unsupported Liquid directories must not produce embedded diagnostics',
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('duplicate bundled asset tags are not merged into one virtual document', { timeout: 10_000 }, async () => {
+  const source = `{% javascript %}\ndocument.\n{% endjavascript %}\n{% javascript %}\ndocument.\n{% endjavascript %}`;
+  const theme = await createTheme({ 'sections/duplicate.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({ textDocument: { completion: {} } });
+    const uri = client.open(theme.file('sections/duplicate.liquid'), source);
+    const firstCompletion = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('document.') + 'document.'.length),
+      context: { triggerKind: 1 },
+    });
+    assert.notEqual(firstCompletion, null);
+
+    const secondCompletion = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, source.lastIndexOf('document.') + 'document.'.length),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert.equal(secondCompletion, null);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('embedded support server protocol contracts', { timeout: 60_000 }, async () => {
   const settingsSource = `{{ block.settings. }}
 {% schema %}
@@ -97,6 +157,7 @@ test('embedded support server protocol contracts', { timeout: 60_000 }, async ()
 :root{--brand:red}.button{color:var(--brand)}
 {% endstylesheet %}
 {% javascript %}
+return;
 const total=1;console.log(total);missingName;const element=document.querySelector('div');
 {% endjavascript %}
 `;
@@ -113,6 +174,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     'snippets/card.liquid': 'root card',
     'sections/footer.liquid': 'footer',
     'blocks/feature.liquid': 'feature',
+    'nested/.theme-check.yml': 'root: .\n',
     'nested/sections/navigation.liquid': nestedNavigationSource,
     'nested/snippets/card.liquid': 'nested card',
   });
@@ -147,7 +209,9 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       context: { triggerKind: 1 },
     });
     assert(labels(types).has('string'));
+    assert(labels(types).has('string[]'));
     assert(labels(types).has('product'));
+    assert(labels(types).has('product[]'));
 
     const tagCursor = docSource.indexOf('@\n') + 1;
     const tags = await client.request('textDocument/completion', {
@@ -270,6 +334,34 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       locationUri(nestedDefinition),
       pathToFileURL(theme.file('nested/snippets/card.liquid')).href,
       'the nearest theme root must win over a parent theme',
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('static definitions honor a configured Theme Check root', { timeout: 10_000 }, async () => {
+  const source = `{% render 'card' %}`;
+  const theme = await createTheme(
+    {
+      'src/sections/navigation.liquid': source,
+      'dist/snippets/card.liquid': 'configured card',
+    },
+    { themeCheck: 'root: dist\n' },
+  );
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({ definition: {} });
+    const uri = client.open(theme.file('src/sections/navigation.liquid'), source);
+    const definition = await client.request('textDocument/definition', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('card') + 2),
+    });
+    assert.equal(
+      locationUri(definition),
+      pathToFileURL(theme.file('dist/snippets/card.liquid')).href,
     );
   } finally {
     await client.stop();

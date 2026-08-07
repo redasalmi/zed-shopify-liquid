@@ -83,8 +83,9 @@ parallel schema implementation.
 
 Platform-controlled custom CSS is Shopify-owned data in `settings_data.json`
 and JSON template section instances, not a user-authored `{% schema %}` setting.
-The extension does not attach a supplemental server to every JSON document or
-reimplement semantics that Shopify's language server does not expose.
+The official Shopify server is attached to Liquid and theme JSON documents, so
+JSON completion and navigation remain Shopify-owned rather than being
+reimplemented by the extension.
 
 ### Shopify object completion — `ffe94e8`
 
@@ -105,7 +106,14 @@ hyphenated Liquid queries usable.
   documents.
 - Uses Shopify's tolerant Liquid parser to identify raw tag bodies, avoiding
   embedded providers inside comments, raw content, and documentation examples.
-- Restricted results and diagnostics to JavaScript block ranges.
+- Restricted embedded results and diagnostics to supported asset block ranges.
+- Restricted bundled asset semantics to Shopify's `sections/`, `blocks/`, and
+  `snippets/` directories, and analyze only the first asset tag of each kind
+  because Shopify permits one `{% javascript %}` and one `{% stylesheet %}` per
+  file.
+- Modelled Shopify's anonymous JavaScript wrapper with offset-preserving virtual
+  source tokens, so valid statements such as `return` retain the same Liquid
+  source ranges while receiving function-body semantics.
 - Added support for whitespace-trimmed JavaScript delimiters.
 - Pinned TypeScript `5.9.3`; TypeScript 7's current CommonJS package does not
   expose the stable JavaScript language-service API used here.
@@ -133,10 +141,10 @@ approximately 6.5 ms per request on average, about 213 MB active RSS, and about
 60 MB idle RSS before TypeScript was loaded. These figures are development
 measurements rather than cross-platform guarantees.
 
-Subsequent hardening added per-document snapshot caching, embedded-range and
-inter-block separator change detection that ignores unrelated prefix/suffix
-edits, lazy reusable JavaScript and CSS virtual documents, and idle TypeScript
-disposal with lazy recreation. Current budgets and workloads live in
+Subsequent hardening added per-document snapshot caching, embedded-range change
+detection that ignores unrelated prefix/suffix edits, lazy reusable JavaScript
+and CSS virtual documents, and idle TypeScript disposal with lazy recreation.
+Current budgets and workloads live in
 [`PERFORMANCE.md`](PERFORMANCE.md).
 
 ### Embedded navigation and range formatting
@@ -180,10 +188,12 @@ settings used about 63 MB RSS.
 The embedded support server supplements Shopify's LiquidDoc completion when
 Zed autocloses the type braces in `@param {} name`. Shopify's provider handles
 an unfinished `{`, but not a cursor before an existing `}`. The supplemental
-provider offers the four primitive LiquidDoc types plus every Shopify Liquid
-object type, reading Shopify's updated documentation cache with the pinned
-package data as an offline fallback. It remains limited to LiquidDoc-capable
-snippet and Theme Block files and does not load TypeScript.
+provider offers the four primitive LiquidDoc types, their one-dimensional array
+forms, and every Shopify Liquid object type with its array form, reading
+Shopify's updated documentation cache with the pinned package data as an
+offline fallback. It replaces the typed prefix in the paired-brace completion
+range so partially typed types are not duplicated. It remains limited to
+LiquidDoc-capable snippet and Theme Block files and does not load TypeScript.
 
 ### LiquidDoc tags and parameter semantics
 
@@ -211,8 +221,9 @@ references. Its definition provider only resolves translation keys, however, so
 the embedded support server fills that confirmed gap for snippet, section, and
 static block file references. It uses Shopify's tolerant Liquid parser lazily,
 returns definitions only for files that exist, supports references inside
-`{% liquid %}`, and infers the nearest root from standard theme directories so
-nested themes do not resolve references from an unrelated parent theme.
+`{% liquid %}`, honors the `root` value in the nearest `.theme-check.yml`, and
+otherwise infers the nearest root from standard theme directories so nested
+themes do not resolve references from an unrelated parent theme.
 
 ### HTML tag editing
 
@@ -230,12 +241,15 @@ or `linked_edits` settings.
 A persistent Node test harness now launches both language servers over stdio,
 implements the client-side workspace requests they require, and exercises them
 against temporary Shopify theme roots. The embedded-server suite covers inline
-block settings, LiquidDoc tags and paired-brace types, JavaScript completion,
-hover, diagnostics and definitions, CSS custom-property definitions, embedded
-range boundaries, static Liquid file definitions, and nearest-theme-root
-isolation. A deliberately small Shopify smoke suite checks the pinned server's
-capabilities plus representative completion, hover, diagnostics, document
-links, HTML autoclosing, and linked tag editing without duplicating Shopify's
+block settings, LiquidDoc tags and paired-brace primitive/object/array types,
+JavaScript completion, hover, diagnostics and definitions,
+Shopify-supported embedded-file boundaries,
+function-wrapper semantics, duplicate-tag isolation, CSS custom-property
+definitions, embedded range boundaries, static Liquid file definitions,
+configured Theme Check roots, and nearest-theme-root isolation. A deliberately
+small Shopify smoke suite checks the pinned server's capabilities plus
+representative Liquid and JSON completion, hover, diagnostics, document links,
+HTML autoclosing, and linked tag editing without duplicating Shopify's
 provider-level test suite.
 
 The test dependencies pin the same Shopify server and TypeScript versions used
@@ -287,16 +301,16 @@ observations rather than cross-platform guarantees.
 `src/liquid.rs` installs pinned npm dependencies and generates two server entry
 points in Zed's extension work directory:
 
-1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS
-   completion, diagnostics, hover, links, navigation, HTML tag editing, and
-   Theme Check behavior.
+1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS/
+   JSON completion, diagnostics, hover, links, navigation, HTML tag editing,
+   and Theme Check behavior.
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
    inline section-block setting completion, paired-brace LiquidDoc parameter
    type completion, static file definitions, embedded range formatting, and
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.22.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.23.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 
@@ -325,13 +339,16 @@ setup.
 
 ## Design decisions
 
-- Follow Shopify Theme Tools and Shopify's VS Code extension as behavioral and
-  architectural references.
+- Follow [Shopify Theme Tools and its VS Code extension](https://github.com/Shopify/theme-tools)
+  as the behavioral and architectural reference.
 - Prefer official Shopify packages over reimplementing Liquid semantics.
 - Do not duplicate completion, validation, or navigation providers already
   exposed by Shopify's language server; supplement only confirmed host or
   upstream gaps.
-- Keep versions pinned for reproducible startup and compatibility.
+- Keep direct package and grammar versions pinned for compatible startup. Zed's
+  `npm_install_package` API does not accept a lockfile, so Shopify's transitive
+  semver ranges remain resolved by the host rather than being vendored into the
+  extension.
 - Maintain a small grammar fork only where upstream syntax support is missing.
 - Prioritize Theme Blocks, `content_for`, modern schemas, bundled assets, and
   LiquidDoc.
@@ -345,11 +362,9 @@ setup.
 
 ## Reference locations
 
-Paths relative to this repository:
-
-- Shopify Theme Tools: `../theme-tools`
-- Grammar checkout: `grammars/liquid`
-- Representative theme: `../../moen-theme`
+- [Shopify Theme Tools and VS Code extension](https://github.com/Shopify/theme-tools)
+- Shopify-focused grammar checkout: `grammars/liquid` (a separate Git repository)
+- Extension fixtures: `tests/queries/fixtures` and `tests/language-server`
 - Liquid language configuration and queries: `languages/liquid`
 - Shopify server adapter: `src/liquid.rs`
 - Embedded JavaScript server: `language-server/embedded-javascript-server.cjs`

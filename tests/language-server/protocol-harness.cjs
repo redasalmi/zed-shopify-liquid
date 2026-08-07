@@ -183,10 +183,10 @@ class ProtocolClient {
     return result;
   }
 
-  open(filePath, text, version = 1) {
+  open(filePath, text, version = 1, languageId = 'liquid') {
     const uri = pathToFileURL(filePath).href;
     this.notify('textDocument/didOpen', {
-      textDocument: { uri, languageId: 'liquid', version, text },
+      textDocument: { uri, languageId, version, text },
     });
     return uri;
   }
@@ -231,12 +231,12 @@ function valueAtPath(value, section) {
   return current;
 }
 
-async function createTheme(files) {
+async function createTheme(files, { themeCheck = 'root: .\n' } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'zed-liquid-lsp-'));
   for (const directory of ['assets', 'blocks', 'config', 'layout', 'sections', 'snippets', 'templates']) {
     await mkdir(path.join(root, directory), { recursive: true });
   }
-  await writeFile(path.join(root, '.theme-check.yml'), 'root: .\n');
+  await writeFile(path.join(root, '.theme-check.yml'), themeCheck);
   for (const [relativePath, contents] of Object.entries(files)) {
     const filePath = path.join(root, relativePath);
     await mkdir(path.dirname(filePath), { recursive: true });

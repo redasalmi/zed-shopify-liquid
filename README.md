@@ -1,9 +1,9 @@
 # Shopify Liquid Extension for Zed
 
 This extension adds syntax highlighting and Shopify's Theme Language Server to
-Zed. The language server provides Theme Check diagnostics, completion, hover,
-navigation, and editing features using the same core package as Shopify's VS
-Code extension.
+Zed for Liquid and Shopify theme JSON files. The language server provides Theme
+Check diagnostics, completion, hover, navigation, and editing features using the
+same core package as [Shopify's VS Code extension](https://github.com/Shopify/theme-tools/tree/main/packages/vscode-extension).
 
 The extension also provides Liquid-aware indentation, code folding, document
 outlines, bracket matching, embedded HTML, CSS, JavaScript, and JSON
@@ -12,20 +12,25 @@ highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
 custom-property navigation, and selection formatting. Bundled
 `{% javascript %}` blocks support JavaScript completion, hover,
 TypeScript-powered diagnostics, local symbol navigation, and selection
-formatting.
+formatting. Embedded asset semantics apply to Shopify-supported `sections/`,
+`blocks/`, and `snippets/` files; invalid tags elsewhere remain Shopify Theme
+Check diagnostics only.
 Schema-derived completion is also available for `section.settings.*` and
 `block.settings.*`, including inline blocks declared by a section. Shopify's
 language server provides modern `{% schema %}` completion and validation for
 `@theme`, `@app`, targeted and nested blocks, and presets. LiquidDoc `@param`
-declarations complete every supported primitive and Shopify Liquid object type
-inside paired `{}` braces. Typing `@` in LiquidDoc opens Shopify's `@param`,
+declarations complete every supported primitive, array, and Shopify Liquid
+object type inside paired `{}` braces. Typing `@` in LiquidDoc opens Shopify's
+`@param`,
 `@description`, and `@example` snippets, while system-authored `@prompt` blocks
 receive dedicated highlighting. Go-to-definition and document links navigate
 static `render`, `include`, `section`, and `content_for 'block'` file references.
 HTML opening tags autoclose, and renaming an opening or closing tag updates its
 linked counterpart through Shopify's language server.
 
-More work is needed to reach full VS Code parity, so contributions are welcome!
+The extension follows [Shopify Theme Tools](https://github.com/Shopify/theme-tools)
+for language-server behavior while adding Zed-specific Tree-sitter queries and
+embedded-language integration. Contributions are welcome!
 
 ## Configure diagnostics
 
@@ -54,7 +59,8 @@ update cannot be downloaded.
 
 If Liquid has an explicit `language_servers` list in Zed settings, include both
 `liquid` and `liquid-embedded-javascript`. Lists containing `"..."` include the
-embedded server automatically.
+embedded server automatically. If JSON has an explicit list, include `liquid`
+to retain Shopify's theme JSON completion and navigation.
 
 The embedded JavaScript server loads TypeScript only when a JavaScript block is
 open and releases its analysis state 30 seconds after the final JavaScript
@@ -102,7 +108,8 @@ responsive editing over legacy compound asset modes.
 
 ### Foundation
 
-- [x] Shopify Theme Language Server integration and Theme Check diagnostics
+- [x] Shopify Theme Language Server integration for Liquid and theme JSON,
+      including Theme Check diagnostics
 - [x] Liquid-aware highlighting, indentation, folding, outlines, and brackets
 - [x] Modern `content_for` Theme Blocks syntax
 - [x] CSS support in `{% stylesheet %}` blocks
@@ -138,7 +145,8 @@ Shopify- or Zed-specific behavior remains local.
 Dedicated `.js.liquid` and `.css.liquid` modes are not planned. These legacy
 files remain usable as Liquid, but new work focuses on bundled assets and modern
 theme architecture. Platform-controlled settings remain Shopify-owned theme
-JSON data; the extension does not duplicate unsupported JSON semantics.
+JSON data; the extension delegates their JSON semantics to Shopify's server and
+does not maintain a parallel implementation.
 
 ## Development
 

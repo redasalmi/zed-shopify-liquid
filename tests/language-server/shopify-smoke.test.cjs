@@ -17,9 +17,11 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
 <article>Text</article>
 `;
   const autocloseSource = '<main>';
+  const jsonSource = '[{"name":"x","settings":[{"type":""}]}]';
   const theme = await createTheme({
     'sections/features.liquid': featureSource,
     'sections/autoclose.liquid': autocloseSource,
+    'config/settings_schema.json': jsonSource,
     'snippets/card.liquid': '<div>Card</div>',
   });
   const client = shopifyClient(theme.root);
@@ -102,6 +104,22 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
         newText: '</main>',
       },
     ]);
+
+    const jsonUri = client.open(
+      theme.file('config/settings_schema.json'),
+      jsonSource,
+      1,
+      'json',
+    );
+    const jsonCompletions = await client.request('textDocument/completion', {
+      textDocument: { uri: jsonUri },
+      position: positionAt(jsonSource, jsonSource.indexOf('"type":"') + '"type":"'.length),
+      context: { triggerKind: 1 },
+    });
+    assert(
+      completionItems(jsonCompletions).some((item) => item.label === '"header"'),
+      'Shopify JSON schema completion should reach the client',
+    );
 
     const diagnostics = await client.waitForNotification(
       'textDocument/publishDiagnostics',
