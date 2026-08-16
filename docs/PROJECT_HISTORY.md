@@ -294,6 +294,42 @@ with about 82 MiB idle RSS, 225 MiB after warm-up, and 324 MiB after the
 deliberately unique-source workload. These measurements are development
 observations rather than cross-platform guarantees.
 
+### Reliability audit hardening — `0.24.0`
+
+A repository-wide audit led to targeted correctness, lifecycle, supply-chain,
+and release improvements:
+
+- embedded ranges are now half-open, and TypeScript diagnostics, hover ranges,
+  and completion edits cannot cross Liquid closing delimiters;
+- inline-block setting completion requires a parsed Liquid expression context,
+  preventing results in comments, LiquidDoc, and embedded-language strings;
+- asynchronous completion and definition handlers reject cancelled or stale
+  document results;
+- CSS parse trees are cached, TypeScript completion items resolve documentation
+  lazily, and TypeScript filesystem access is restricted to standard libraries
+  and active workspace roots;
+- embedded features require evidence of a Shopify theme root rather than only a
+  directory named `sections`, `blocks`, or `snippets`;
+- both Node servers terminate cleanly after truly uncaught failures so Zed can
+  restart them, while validation failures clear stale diagnostics;
+- language-server installation status now reaches an explicit success or failure
+  state, and TypeScript installations are revalidated if files disappear;
+- the direct Shopify server was updated to `2.22.1`, the development lockfile
+  was refreshed to remove the `nanoid` advisory, and the unused grammar native
+  binding is denied during test installation;
+- grammar package metadata was corrected and the extension pin advanced to
+  `0e228e6d080f1fc7b0e6a661479004c16c8d2514` without parser changes;
+- CI now runs protocol, query, dependency, Rust, TOML, and WASI build checks,
+  with a scheduled fresh resolution of the runtime npm dependency graph;
+- regression coverage now includes malformed block boundaries, syntax-aware
+  settings, stale requests, completion resolution, ranged Unicode edits,
+  unrelated directories, and multiple large open documents.
+
+The embedded server version reported to LSP clients is injected from the Rust
+package version when Zed writes the runtime script. A manual Zed host gate is
+recorded in [`RELEASE.md`](RELEASE.md) because no headless extension-host harness
+is available to this repository.
+
 ## Current architecture
 
 ### Extension host
@@ -310,7 +346,7 @@ points in Zed's extension work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.23.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.24.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

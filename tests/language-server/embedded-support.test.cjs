@@ -1,6 +1,9 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { mkdtemp, mkdir, rm, writeFile } = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const { pathToFileURL } = require('node:url');
 const {
@@ -77,6 +80,138 @@ const broken = ;
   }
 });
 
+test('schema setting completion is limited to Liquid expressions', { timeout: 10_000 }, async () => {
+  const source = `{% comment %}{{ block.settings. }}{% endcomment %}
+{% javascript %}const value = 'block.settings.';{% endjavascript %}
+{% doc %}
+block.settings.
+{% enddoc %}
+{{ block.settings. }}
+{% schema %}
+{"blocks":[{"type":"slide","settings":[{"type":"text","id":"heading"}]}]}
+{% endschema %}
+`;
+  const theme = await createTheme({ 'sections/setting-contexts.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({ textDocument: { completion: {} } });
+    const uri = client.open(theme.file('sections/setting-contexts.liquid'), source);
+    const occurrences = [];
+    let occurrence = source.indexOf('block.settings.');
+    while (occurrence !== -1) {
+      occurrences.push(occurrence);
+      occurrence = source.indexOf('block.settings.', occurrence + 1);
+    }
+
+    for (const ignored of occurrences.slice(0, 3)) {
+      assert.equal(
+        await client.request('textDocument/completion', {
+          textDocument: { uri },
+          position: positionAt(source, ignored + 'block.settings.'.length),
+          context: { triggerKind: 2, triggerCharacter: '.' },
+        }),
+        null,
+      );
+    }
+
+    const liquidResult = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(source, occurrences[3] + 'block.settings.'.length),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert.deepEqual([...labels(liquidResult)], ['heading']);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('embedded providers use half-open ranges and contain diagnostics', { timeout: 10_000 }, async () => {
+  const source = `{% stylesheet %}\n:root { --brand: red; }\n{% endstylesheet %}\n{% javascript %}\nconst value = ({\n{% endjavascript %}\n`;
+  const theme = await createTheme({ 'sections/boundaries.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      textDocument: { completion: {}, definition: {}, hover: {}, publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('sections/boundaries.liquid'), source);
+    const closingOffset = source.indexOf('{% endjavascript %}');
+    const closingOffsets = [source.indexOf('{% endstylesheet %}'), closingOffset];
+    for (const boundary of closingOffsets) {
+      for (const method of ['textDocument/completion', 'textDocument/definition', 'textDocument/hover']) {
+        const result = await client.request(method, {
+          textDocument: { uri },
+          position: positionAt(source, boundary),
+          ...(method === 'textDocument/completion' ? { context: { triggerKind: 1 } } : {}),
+        });
+        assert.equal(result, null, `${method} must not activate at a closing-tag boundary`);
+      }
+      assert.deepEqual(
+        await client.request('textDocument/rangeFormatting', {
+          textDocument: { uri },
+          range: {
+            start: positionAt(source, boundary),
+            end: positionAt(source, boundary),
+          },
+          options: { tabSize: 2, insertSpaces: true },
+        }),
+        [],
+      );
+    }
+
+    const published = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) => params.uri === uri,
+    );
+    assert(
+      published.diagnostics.every(
+        (diagnostic) => offsetAt(source, diagnostic.range.end) <= closingOffset,
+      ),
+      'TypeScript diagnostics must not include Liquid closing delimiters',
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('async responses are discarded after the document changes', { timeout: 10_000 }, async () => {
+  const source = `{% render 'card' %}`;
+  const changed = '<div>Reference removed</div>';
+  const docSource = `{% doc %}\n@param {pro} item\n{% enddoc %}`;
+  const theme = await createTheme({
+    'sections/stale-definition.liquid': source,
+    'snippets/card.liquid': 'card',
+    'snippets/stale-doc.liquid': docSource,
+  });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({ textDocument: { definition: {} } });
+    const uri = client.open(theme.file('sections/stale-definition.liquid'), source);
+    const definition = client.request('textDocument/definition', {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('card') + 2),
+    });
+    client.change(uri, changed, 2);
+    assert.equal(await definition, null);
+
+    const docUri = client.open(theme.file('snippets/stale-doc.liquid'), docSource);
+    const completion = client.request('textDocument/completion', {
+      textDocument: { uri: docUri },
+      position: positionAt(docSource, docSource.indexOf('pro}') + 'pro'.length),
+      context: { triggerKind: 1 },
+    });
+    client.change(docUri, '<div>Documentation removed</div>', 2);
+    assert.equal(await completion, null);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('embedded providers stay disabled outside Shopify bundled-asset directories', { timeout: 10_000 }, async () => {
   const source = `{% javascript %}\nconst broken = ;\n{% endjavascript %}`;
   const theme = await createTheme({ 'layout/theme.liquid': source });
@@ -110,6 +245,39 @@ test('embedded providers stay disabled outside Shopify bundled-asset directories
   }
 });
 
+test('a directory name alone does not activate Shopify embedded providers', { timeout: 10_000 }, async () => {
+  const source = `{{ block.settings. }}
+{% javascript %}\ndocument.\n{% endjavascript %}
+{% schema %}{"blocks":[{"type":"x","settings":[{"type":"text","id":"heading"}]}]}{% endschema %}`;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'zed-liquid-unrelated-'));
+  const sections = path.join(root, 'sections');
+  const filePath = path.join(sections, 'example.liquid');
+  await mkdir(sections);
+  await writeFile(filePath, source);
+  const client = embeddedClient(root);
+
+  try {
+    await client.initialize({ textDocument: { completion: {} } });
+    const uri = client.open(filePath, source);
+    for (const offset of [
+      source.indexOf('block.settings.') + 'block.settings.'.length,
+      source.indexOf('document.') + 'document.'.length,
+    ]) {
+      assert.equal(
+        await client.request('textDocument/completion', {
+          textDocument: { uri },
+          position: positionAt(source, offset),
+          context: { triggerKind: 2, triggerCharacter: '.' },
+        }),
+        null,
+      );
+    }
+  } finally {
+    await client.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('duplicate bundled asset tags are not merged into one virtual document', { timeout: 10_000 }, async () => {
   const source = `{% javascript %}\ndocument.\n{% endjavascript %}\n{% javascript %}\ndocument.\n{% endjavascript %}`;
   const theme = await createTheme({ 'sections/duplicate.liquid': source });
@@ -137,6 +305,83 @@ test('duplicate bundled asset tags are not merged into one virtual document', { 
   }
 });
 
+test('ranged incremental Unicode edits invalidate embedded state', { timeout: 10_000 }, async () => {
+  const source = `<p>Crème 🛍️</p>\r\n{% javascript %}\r\nconst oldName = 1;\r\nconsole.log(oldName);\r\n{% endjavascript %}`;
+  const updatedSource = source.replace('oldName', 'currentName');
+  const theme = await createTheme({ 'sections/incremental.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      textDocument: { definition: {}, publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('sections/incremental.liquid'), source);
+    const declarationStart = source.indexOf('oldName');
+    client.changeIncrementally(
+      uri,
+      [
+        {
+          range: {
+            start: positionAt(source, declarationStart),
+            end: positionAt(source, declarationStart + 'oldName'.length),
+          },
+          text: 'currentName',
+        },
+      ],
+      2,
+    );
+
+    const useOffset = updatedSource.lastIndexOf('oldName') + 2;
+    assert.equal(
+      await client.request('textDocument/definition', {
+        textDocument: { uri },
+        position: positionAt(updatedSource, useOffset),
+      }),
+      null,
+    );
+    const diagnostics = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) =>
+        params.uri === uri &&
+        params.diagnostics.some((diagnostic) => /oldName/.test(diagnostic.message)),
+    );
+    assert(
+      diagnostics.diagnostics.every(
+        (diagnostic) => offsetAt(updatedSource, diagnostic.range.end) <= updatedSource.indexOf('{% endjavascript %}'),
+      ),
+    );
+
+    const prefixOffset = updatedSource.indexOf('Crème');
+    const shiftedSource =
+      updatedSource.slice(0, prefixOffset) + 'Très ' + updatedSource.slice(prefixOffset);
+    client.changeIncrementally(
+      uri,
+      [
+        {
+          range: {
+            start: positionAt(updatedSource, prefixOffset),
+            end: positionAt(updatedSource, prefixOffset),
+          },
+          text: 'Très ',
+        },
+      ],
+      3,
+    );
+    const hover = await client.request('textDocument/hover', {
+      textDocument: { uri },
+      position: positionAt(shiftedSource, shiftedSource.indexOf('currentName') + 2),
+    });
+    assert.match(hover.contents.value, /currentName/);
+    assert.deepEqual(
+      hover.range.start,
+      positionAt(shiftedSource, shiftedSource.indexOf('currentName')),
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('embedded support server protocol contracts', { timeout: 60_000 }, async () => {
   const settingsSource = `{{ block.settings. }}
 {% schema %}
@@ -153,7 +398,8 @@ test('embedded support server protocol contracts', { timeout: 60_000 }, async ()
 @
 {% enddoc %}
 `;
-  const assetSource = `{% stylesheet %}
+  const assetSource = `<p>Crème 🛍️</p>
+{% stylesheet %}
 :root{--brand:red}.button{color:var(--brand)}
 {% endstylesheet %}
 {% javascript %}
@@ -192,6 +438,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     assert.equal(initialize.serverInfo.name, 'liquid-embedded-support');
     assert.equal(initialize.capabilities.definitionProvider, true);
     assert.equal(initialize.capabilities.documentRangeFormattingProvider, true);
+    assert.equal(initialize.capabilities.completionProvider.resolveProvider, true);
 
     const settingsUri = client.open(theme.file('sections/settings.liquid'), settingsSource);
     const settings = await client.request('textDocument/completion', {
@@ -249,6 +496,12 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       context: { triggerKind: 2, triggerCharacter: '.' },
     });
     assert(labels(javascript).has('querySelector'));
+    const querySelectorItem = completionItems(javascript).find(
+      (item) => item.label === 'querySelector',
+    );
+    const resolvedCompletion = await client.request('completionItem/resolve', querySelectorItem);
+    assert.match(resolvedCompletion.detail, /querySelector/);
+    assert.match(resolvedCompletion.documentation.value, /selector/i);
 
     const hover = await client.request('textDocument/hover', {
       textDocument: { uri: assetUri },

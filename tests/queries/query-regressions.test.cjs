@@ -12,11 +12,26 @@ const fixturePath = path.join(__dirname, 'fixtures/modern.liquid');
 const fixture = readFileSync(fixturePath, 'utf8');
 const treeSitterCli = require.resolve('tree-sitter-cli/cli.js');
 
-assert.match(fixture, /^[\x00-\x7F]*$/, 'position conversion assumes an ASCII fixture');
+function offsetAt(row, byteColumn) {
+  const lineStarts = [0];
+  for (let offset = 0; offset < fixture.length; offset += 1) {
+    if (fixture[offset] === '\n') lineStarts.push(offset + 1);
+  }
+  assert(row < lineStarts.length, `row ${row} is outside the fixture`);
 
-function offsetAt(row, column) {
-  const lines = fixture.split('\n');
-  return lines.slice(0, row).reduce((total, line) => total + line.length + 1, 0) + column;
+  const lineStart = lineStarts[row];
+  const lineEnd = fixture.indexOf('\n', lineStart);
+  const line = fixture.slice(lineStart, lineEnd === -1 ? fixture.length : lineEnd);
+  let bytes = 0;
+  let codeUnits = 0;
+  for (const character of line) {
+    if (bytes === byteColumn) break;
+    bytes += Buffer.byteLength(character);
+    codeUnits += character.length;
+    assert(bytes <= byteColumn, `byte column ${byteColumn} splits a Unicode character`);
+  }
+  assert.equal(bytes, byteColumn, `byte column ${byteColumn} is outside row ${row}`);
+  return lineStart + codeUnits;
 }
 
 function runQuery(name) {
@@ -75,6 +90,7 @@ test('highlight captures preserve modern Liquid and LiquidDoc semantics', () => 
 test('injection captures preserve embedded language boundaries', () => {
   const captures = runQuery('injections');
   assertCapture(captures, 'injection.content', 'title: Query fixture', { contains: true });
+  assertCapture(captures, 'injection.content', 'Crème 🛍️', { contains: true });
   assertCapture(captures, 'injection.content', 'Query-only comment.', { contains: true });
   assertCapture(captures, 'injection.content', '<div class="product-card">', {
     contains: true,

@@ -150,7 +150,9 @@ does not maintain a parallel implementation.
 
 ## Development
 
-Install the pinned test dependencies and run the protocol and query suites:
+Using Node.js 22 or newer and npm 11.17.0, install the test
+dependencies and run the protocol and query suites. The grammar's unused native
+Node binding is disabled, so this test install does not require a C++ toolchain:
 
 ```sh
 npm ci
@@ -163,9 +165,10 @@ The enforced budgets and optimization strategy are documented in the
 
 See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
 comparison with the pre-overhaul extension, completed work, design decisions,
-performance notes, and repository relationships. [`AGENTS.md`](AGENTS.md)
-provides concise project guidance that Pi and compatible coding agents load in
-future sessions.
+performance notes, and repository relationships. The
+[Release Checklist](docs/RELEASE.md) records the automated and Zed-host release
+gates. [`AGENTS.md`](AGENTS.md) provides concise project guidance that Pi and
+compatible coding agents load in future sessions.
 
 ## Credits
 

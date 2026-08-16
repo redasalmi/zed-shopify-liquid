@@ -11,7 +11,7 @@ struct LiquidExtension {
 // the full CLI adds an unrelated bootstrap layer and couples the extension to
 // the CLI's stricter Node.js version requirement.
 const PACKAGE_NAME: &str = "@shopify/theme-language-server-node";
-const PACKAGE_VERSION: &str = "2.22.0";
+const PACKAGE_VERSION: &str = "2.22.1";
 const SERVER_PATH: &str = "node_modules/@shopify/theme-language-server-node/dist/index.js";
 const SERVER_WRAPPER_PATH: &str = "run-liquid-language-server.cjs";
 const EMBEDDED_SERVER_ID: &str = "liquid-embedded-javascript";
@@ -25,10 +25,15 @@ const TYPESCRIPT_PACKAGE_VERSION: &str = "5.9.3";
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
 const SERVER_WRAPPER: &str = r#"const { startServer } = require('./node_modules/@shopify/theme-language-server-node/dist/index.js');
 
-// Match Shopify's VS Code host: report unexpected failures without allowing a
-// single malformed document or provider request to terminate the LSP process.
-process.on('uncaughtException', (error) => console.error(error));
-process.on('unhandledRejection', (error) => console.error(error));
+// Provider-level failures are handled by the LSP framework. A truly uncaught
+// failure can leave shared server state inconsistent, so log it to stderr and
+// exit cleanly for Zed to restart instead of continuing in an unknown state.
+function terminateAfterUnexpectedFailure(error) {
+  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  setImmediate(() => process.exit(1));
+}
+process.once('uncaughtException', terminateAfterUnexpectedFailure);
+process.once('unhandledRejection', terminateAfterUnexpectedFailure);
 
 startServer();
 "#;
@@ -42,102 +47,140 @@ impl LiquidExtension {
         fs::metadata(TYPESCRIPT_SERVER_PATH).is_ok_and(|stat| stat.is_file())
     }
 
-    fn server_script_path(&mut self, language_server_id: &zed::LanguageServerId) -> Result<String> {
-        if !(self.did_find_server && self.server_exists()) {
-            zed::set_language_server_installation_status(
-                language_server_id,
-                &zed::LanguageServerInstallationStatus::CheckingForUpdate,
-            );
-
-            let installed_version = zed::npm_package_installed_version(PACKAGE_NAME)?;
-            if !self.server_exists() || installed_version.as_deref() != Some(PACKAGE_VERSION) {
+    fn report_installation_result<T>(
+        language_server_id: &zed::LanguageServerId,
+        result: Result<T>,
+    ) -> Result<T> {
+        match result {
+            Ok(value) => {
                 zed::set_language_server_installation_status(
                     language_server_id,
-                    &zed::LanguageServerInstallationStatus::Downloading,
+                    &zed::LanguageServerInstallationStatus::None,
+                );
+                Ok(value)
+            }
+            Err(error) => {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::Failed(error.clone()),
+                );
+                Err(error)
+            }
+        }
+    }
+
+    fn server_script_path(&mut self, language_server_id: &zed::LanguageServerId) -> Result<String> {
+        let result = (|| {
+            if !(self.did_find_server && self.server_exists()) {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::CheckingForUpdate,
                 );
 
-                if let Err(error) = zed::npm_install_package(PACKAGE_NAME, PACKAGE_VERSION) {
-                    // An already installed server is more useful than disabling
-                    // Liquid support because an update failed while offline.
-                    if !self.server_exists() {
-                        return Err(error);
+                let installed_version = zed::npm_package_installed_version(PACKAGE_NAME)?;
+                if !self.server_exists() || installed_version.as_deref() != Some(PACKAGE_VERSION) {
+                    zed::set_language_server_installation_status(
+                        language_server_id,
+                        &zed::LanguageServerInstallationStatus::Downloading,
+                    );
+
+                    if let Err(error) = zed::npm_install_package(PACKAGE_NAME, PACKAGE_VERSION) {
+                        // An already installed server is more useful than disabling
+                        // Liquid support because an update failed while offline.
+                        if !self.server_exists() {
+                            return Err(error);
+                        }
                     }
                 }
+
+                if !self.server_exists() {
+                    return Err(format!(
+                        "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
+                    ));
+                }
+                self.did_find_server = true;
             }
 
-            if !self.server_exists() {
-                return Err(format!(
-                    "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
-                ));
-            }
-            self.did_find_server = true;
-        }
+            fs::write(SERVER_WRAPPER_PATH, SERVER_WRAPPER).map_err(|error| {
+                format!("failed to write Liquid language server wrapper: {error}")
+            })?;
 
-        fs::write(SERVER_WRAPPER_PATH, SERVER_WRAPPER)
-            .map_err(|error| format!("failed to write Liquid language server wrapper: {error}"))?;
+            env::current_dir()
+                .map(|path| {
+                    path.join(SERVER_WRAPPER_PATH)
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .map_err(|error| {
+                    format!("failed to locate the Liquid extension work directory: {error}")
+                })
+        })();
 
-        env::current_dir()
-            .map(|path| {
-                path.join(SERVER_WRAPPER_PATH)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .map_err(|error| {
-                format!("failed to locate the Liquid extension work directory: {error}")
-            })
+        Self::report_installation_result(language_server_id, result)
     }
 
     fn embedded_server_script_path(
         &mut self,
         language_server_id: &zed::LanguageServerId,
     ) -> Result<String> {
-        // This also ensures the vscode-languageserver dependency supplied by
-        // Shopify's server package is available to the embedded server.
-        self.server_script_path(language_server_id)?;
+        let result = (|| {
+            // This also ensures the vscode-languageserver dependency supplied by
+            // Shopify's server package is available to the embedded server.
+            self.server_script_path(language_server_id)?;
 
-        if !self.did_find_typescript {
-            let installed_version = zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
-            if !self.typescript_exists()
-                || installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION)
-            {
-                zed::set_language_server_installation_status(
-                    language_server_id,
-                    &zed::LanguageServerInstallationStatus::Downloading,
-                );
-
-                if let Err(error) =
-                    zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, TYPESCRIPT_PACKAGE_VERSION)
+            if !(self.did_find_typescript && self.typescript_exists()) {
+                let installed_version =
+                    zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
+                if !self.typescript_exists()
+                    || installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION)
                 {
-                    // Keep an older usable TypeScript installation when an
-                    // update fails while offline. Embedded support is better
-                    // than disabling the second language server entirely.
-                    if !self.typescript_exists() {
-                        return Err(error);
+                    zed::set_language_server_installation_status(
+                        language_server_id,
+                        &zed::LanguageServerInstallationStatus::Downloading,
+                    );
+
+                    if let Err(error) = zed::npm_install_package(
+                        TYPESCRIPT_PACKAGE_NAME,
+                        TYPESCRIPT_PACKAGE_VERSION,
+                    ) {
+                        // Keep an older usable TypeScript installation when an
+                        // update fails while offline. Embedded support is better
+                        // than disabling the second language server entirely.
+                        if !self.typescript_exists() {
+                            return Err(error);
+                        }
                     }
                 }
+
+                if !self.typescript_exists() {
+                    return Err(format!(
+                        "installed package '{TYPESCRIPT_PACKAGE_NAME}' did not contain expected path '{TYPESCRIPT_SERVER_PATH}'",
+                    ));
+                }
+                self.did_find_typescript = true;
             }
 
-            if !self.typescript_exists() {
-                return Err(format!(
-                    "installed package '{TYPESCRIPT_PACKAGE_NAME}' did not contain expected path '{TYPESCRIPT_SERVER_PATH}'",
-                ));
-            }
-            self.did_find_typescript = true;
-        }
+            let embedded_server = format!(
+                "process.env.LIQUID_EXTENSION_VERSION ||= {:?};\n{}",
+                env!("CARGO_PKG_VERSION"),
+                EMBEDDED_SERVER,
+            );
+            fs::write(EMBEDDED_SERVER_PATH, embedded_server).map_err(|error| {
+                format!("failed to write embedded JavaScript language server: {error}")
+            })?;
 
-        fs::write(EMBEDDED_SERVER_PATH, EMBEDDED_SERVER).map_err(|error| {
-            format!("failed to write embedded JavaScript language server: {error}")
-        })?;
+            env::current_dir()
+                .map(|path| {
+                    path.join(EMBEDDED_SERVER_PATH)
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .map_err(|error| {
+                    format!("failed to locate the Liquid extension work directory: {error}")
+                })
+        })();
 
-        env::current_dir()
-            .map(|path| {
-                path.join(EMBEDDED_SERVER_PATH)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .map_err(|error| {
-                format!("failed to locate the Liquid extension work directory: {error}")
-            })
+        Self::report_installation_result(language_server_id, result)
     }
 }
 
@@ -214,6 +257,7 @@ mod tests {
     use super::*;
 
     const EXTENSION_MANIFEST: &str = include_str!("../extension.toml");
+    const EXTENSION_SOURCE: &str = include_str!("liquid.rs");
     const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
     const TEST_PACKAGE: &str = include_str!("../package.json");
 
@@ -229,6 +273,7 @@ mod tests {
         assert!(SERVER_WRAPPER.contains("uncaughtException"));
         assert!(SERVER_WRAPPER.contains("unhandledRejection"));
         assert!(SERVER_WRAPPER.contains("console.error"));
+        assert!(SERVER_WRAPPER.contains("process.exit(1)"));
 
         let handler = SERVER_WRAPPER.find("uncaughtException").unwrap();
         let start = SERVER_WRAPPER.find("startServer();").unwrap();
@@ -236,6 +281,12 @@ mod tests {
             handler < start,
             "recovery handlers must be active before startup"
         );
+    }
+
+    #[test]
+    fn installation_status_is_cleared_or_failed_explicitly() {
+        assert!(EXTENSION_SOURCE.contains("LanguageServerInstallationStatus::None"));
+        assert!(EXTENSION_SOURCE.contains("LanguageServerInstallationStatus::Failed"));
     }
 
     #[test]
@@ -285,6 +336,7 @@ mod tests {
             .find_map(|line| line.strip_prefix("commit = \"")?.strip_suffix('"'))
             .unwrap();
         assert!(grammar_package.contains(grammar_commit));
+        assert_eq!(package["allowScripts"][grammar_package], false);
     }
 
     #[test]
@@ -301,6 +353,7 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("configuredThemeRootForFile"));
         assert!(EMBEDDED_SERVER.contains("function rawTagNodes(source)"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
+        assert!(EMBEDDED_SERVER.contains("getCompletionEntryDetails"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
         assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
         assert!(EMBEDDED_SERVER.contains("settingsCompletions"));
@@ -334,6 +387,12 @@ mod tests {
         assert!(TYPESCRIPT_SERVER_PATH.ends_with("/lib/typescript.js"));
         assert!(EMBEDDED_SERVER.contains("ts.createLanguageService"));
         assert!(EMBEDDED_SERVER.contains("One incremental service is shared"));
+        assert!(EMBEDDED_SERVER.contains("process.env.LIQUID_EXTENSION_VERSION"));
+        let manifest_version = EXTENSION_MANIFEST
+            .lines()
+            .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
+            .unwrap();
+        assert_eq!(env!("CARGO_PKG_VERSION"), manifest_version);
         assert_eq!(EMBEDDED_NODE_HEAP_ARG, "--max-old-space-size=128");
     }
 

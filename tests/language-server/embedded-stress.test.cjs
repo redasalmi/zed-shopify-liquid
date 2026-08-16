@@ -17,6 +17,8 @@ const DEFAULT_RSS_GROWTH_LIMIT_MIB = 128;
 const DEFAULT_RESTART_GROWTH_LIMIT_MIB = 96;
 const PLAIN_LIQUID_ITERATIONS = 150;
 const PLAIN_LIQUID_RSS_GROWTH_LIMIT_MIB = 32;
+const LARGE_DOCUMENT_COUNT = 12;
+const LARGE_DOCUMENT_SIZE = 256 * 1024;
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -100,6 +102,55 @@ test('plain Liquid updates keep embedded services unloaded', async (t) => {
       'textDocument/publishDiagnostics',
       (params) => params.uri === uri && params.diagnostics.length === 0,
     );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('multiple large embedded documents remain within the process budget', { timeout: 60_000 }, async (t) => {
+  const files = {};
+  const sources = [];
+  for (let index = 0; index < LARGE_DOCUMENT_COUNT; index += 1) {
+    const padding = 'x'.repeat(LARGE_DOCUMENT_SIZE);
+    const source = `<div>${padding}</div>\n{% javascript %}\nconst value${index}=${index};\ndocument.querySelector('main');\nvalue${index};\n{% endjavascript %}\n`;
+    files[`sections/large-${index}.liquid`] = source;
+    sources.push(source);
+  }
+  const theme = await createTheme(files);
+  const client = embeddedClient(theme.root);
+  const uris = [];
+
+  try {
+    await client.initialize({
+      textDocument: { completion: {}, definition: {}, publishDiagnostics: {} },
+    });
+    for (let index = 0; index < LARGE_DOCUMENT_COUNT; index += 1) {
+      uris.push(client.open(theme.file(`sections/large-${index}.liquid`), sources[index]));
+    }
+
+    for (let index = 0; index < LARGE_DOCUMENT_COUNT; index += 1) {
+      const source = sources[index];
+      const completionOffset = source.indexOf('document.') + 'document.'.length;
+      const completion = await client.request('textDocument/completion', {
+        textDocument: { uri: uris[index] },
+        position: positionAt(source, completionOffset),
+        context: { triggerKind: 2, triggerCharacter: '.' },
+      });
+      assert(completionItems(completion).some((item) => item.label === 'querySelector'));
+    }
+
+    await delay(100);
+    const rss = residentSetMiB(client.process.pid);
+    if (rss !== null) {
+      const rssLimit = Number(process.env.LIQUID_STRESS_RSS_LIMIT_MIB || DEFAULT_RSS_LIMIT_MIB);
+      assert(rss <= rssLimit, `multi-document RSS reached ${rss.toFixed(1)} MiB`);
+      t.diagnostic(
+        `${LARGE_DOCUMENT_COUNT} × ${LARGE_DOCUMENT_SIZE / 1024} KiB documents used ${rss.toFixed(1)} MiB RSS`,
+      );
+    }
+
+    for (const uri of uris) client.close(uri);
   } finally {
     await client.stop();
     await theme.cleanup();

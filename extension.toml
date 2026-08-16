@@ -1,6 +1,6 @@
 id = "liquid"
 name = "Liquid"
-version = "0.23.0"
+version = "0.24.0"
 schema_version = 1
 authors = ["Jeffrey Guenther <guenther.jeffrey@gmail.com>"]
 description = "Shopify Liquid support"
@@ -8,7 +8,7 @@ repository = "https://github.com/redasalmi/zed-shopify-liquid"
 
 [grammars.liquid]
 repository = "https://github.com/redasalmi/tree-sitter-liquid"
-commit = "e229daeca9b64337451e02db52b1b92da77961b2"
+commit = "0e228e6d080f1fc7b0e6a661479004c16c8d2514"
 
 [language_servers.liquid]
 name = "Shopify Theme Language Server"

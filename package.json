@@ -1,6 +1,10 @@
 {
   "name": "zed-shopify-liquid-tests",
   "private": true,
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "npm run test:lsp && npm run test:queries",
     "test:lsp": "node --test --test-concurrency=1 tests/language-server/*.test.cjs",
@@ -8,13 +12,14 @@
     "test:stress": "node --test tests/language-server/embedded-stress.test.cjs"
   },
   "devDependencies": {
-    "@shopify/theme-language-server-node": "2.22.0",
+    "@shopify/theme-language-server-node": "2.22.1",
     "tree-sitter-cli": "0.22.6",
-    "tree-sitter-liquid": "https://github.com/redasalmi/tree-sitter-liquid/archive/e229daeca9b64337451e02db52b1b92da77961b2.tar.gz",
+    "tree-sitter-liquid": "https://github.com/redasalmi/tree-sitter-liquid/archive/0e228e6d080f1fc7b0e6a661479004c16c8d2514.tar.gz",
     "typescript": "5.9.3"
   },
   "allowScripts": {
     "tree-sitter-cli@0.22.6": true,
+    "https://github.com/redasalmi/tree-sitter-liquid/archive/0e228e6d080f1fc7b0e6a661479004c16c8d2514.tar.gz": false,
     "tree-sitter": false
   }
 }

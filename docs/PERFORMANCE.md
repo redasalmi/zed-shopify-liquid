@@ -13,6 +13,8 @@ The repeatable protocol workloads enforce these default budgets:
   by at most 32 MiB across 150 updates of a 64 KiB document;
 - the JavaScript workload remains under 384 MiB RSS and grows by at most 128 MiB
   after completion warm-up;
+- 12 simultaneously open 256 KiB Liquid documents with bundled JavaScript also
+  remain under the same 384 MiB process budget;
 - disposing and recreating TypeScript may add at most 96 MiB over the first warm
   state;
 - warm incremental JavaScript requests should remain comfortably below a 15 ms
@@ -30,23 +32,29 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 2. Load TypeScript and CSS services only on the first relevant request.
 3. Debounce TypeScript diagnostics while preserving immediate completions.
 4. Cache standard-library and per-document script snapshots.
-5. Compare embedded ranges and content before invalidating the TypeScript
-   project; ignore unrelated prefix and suffix edits.
+5. Preserve and offset parsed Liquid analysis for safe ranged edits outside
+   semantic regions, avoiding a full parser pass; invalidate TypeScript only
+   when a JavaScript range or source offset changes.
 6. Materialize full-length JavaScript and CSS virtual documents only when a
-   service requests them, then reuse unchanged sources and CSS documents.
-7. Dispose TypeScript programs, document registries, and library snapshots 30
+   service requests them, then reuse unchanged sources, CSS documents, and
+   parsed CSS stylesheets.
+7. Restrict TypeScript filesystem access to its standard libraries and current
+   workspace roots, preventing imports from expanding analysis outside the
+   active project.
+8. Dispose TypeScript programs, document registries, and library snapshots 30
    seconds after the final JavaScript document becomes inactive. Reopening a
    JavaScript document recreates the service lazily.
-8. Keep the server under `--max-old-space-size=128`.
+9. Keep the server under `--max-old-space-size=128`.
 
 ## Regression workloads
 
-`npm run test:stress` covers three independent cases:
+`npm run test:stress` covers four independent cases:
 
 1. repeated large Liquid updates without embedded assets;
-2. 300 unique JavaScript updates with completion, definition, diagnostics, and
+2. 12 simultaneously open 256 KiB Liquid documents with JavaScript semantics;
+3. 300 unique JavaScript updates with completion, definition, diagnostics, and
    stale-state assertions;
-3. TypeScript idle disposal followed by successful lazy recreation.
+4. TypeScript idle disposal followed by successful lazy recreation.
 
 RSS is sampled on Linux and macOS. Other platforms run the semantic, lifecycle,
 and process-survival contracts without RSS assertions. RSS is expected to

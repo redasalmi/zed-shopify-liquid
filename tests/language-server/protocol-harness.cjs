@@ -198,6 +198,13 @@ class ProtocolClient {
     });
   }
 
+  changeIncrementally(uri, contentChanges, version) {
+    this.notify('textDocument/didChange', {
+      textDocument: { uri, version },
+      contentChanges,
+    });
+  }
+
   close(uri) {
     this.notify('textDocument/didClose', { textDocument: { uri } });
   }
