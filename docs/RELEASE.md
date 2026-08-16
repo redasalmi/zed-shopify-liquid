@@ -1,7 +1,8 @@
 # Release Checklist
 
-CI validates the locked dependency graph, language-server protocol contracts,
-Tree-sitter queries, Rust tests, TOML, and the release WASM build. Zed does not
+CI validates the locked dependency graph, repository version contracts,
+language-server protocol contracts, Tree-sitter queries, Rust tests, TOML, and
+the release WASM builds. Tag builds retain both WASI artifacts for 30 days. Zed does not
 currently provide this repository with a headless extension-host harness, so the
 host integration remains an explicit release gate rather than an implicit
 assumption.
@@ -12,6 +13,7 @@ From a clean checkout with Node.js 22+ and npm 11.17.0, run:
 
 ```sh
 npm ci
+npm run check:repository
 npm test
 npm audit
 node --check language-server/embedded-javascript-server.cjs
@@ -46,7 +48,8 @@ repository.
 
 ## Version and artifact checks
 
-- Update `Cargo.toml`, `Cargo.lock`, and `extension.toml` together.
+- Update `Cargo.toml`, `Cargo.lock`, and `extension.toml` together; CI rejects a
+  `v*` tag that does not match their version.
 - The generated embedded server receives `CARGO_PKG_VERSION`; do not add a
   separate hard-coded protocol version.
 - Confirm the grammar commit in `extension.toml` matches the tarball commit in

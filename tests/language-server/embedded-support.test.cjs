@@ -278,6 +278,98 @@ test('a directory name alone does not activate Shopify embedded providers', { ti
   }
 });
 
+test('workspace-folder changes invalidate theme activation caches', { timeout: 10_000 }, async () => {
+  const source = `{% javascript %}\ndocument.\n{% endjavascript %}`;
+  const theme = await createTheme({ 'sections/workspace-change.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      workspace: {
+        workspaceFolders: true,
+        didChangeWatchedFiles: { dynamicRegistration: true },
+      },
+      textDocument: { completion: {} },
+    });
+    const uri = client.open(theme.file('sections/workspace-change.liquid'), source);
+    const position = positionAt(source, source.indexOf('document.') + 'document.'.length);
+    const initial = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position,
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert(labels(initial).has('querySelector'));
+
+    client.notify('workspace/didChangeWorkspaceFolders', {
+      event: {
+        added: [],
+        removed: [{ uri: pathToFileURL(theme.root).href, name: path.basename(theme.root) }],
+      },
+    });
+    client.change(uri, source, 2);
+    assert.equal(
+      await client.request('textDocument/completion', {
+        textDocument: { uri },
+        position,
+        context: { triggerKind: 2, triggerCharacter: '.' },
+      }),
+      null,
+    );
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('oversized embedded documents degrade without loading TypeScript', { timeout: 10_000 }, async () => {
+  const largeSource = `{% javascript %}\n${'x'.repeat(2048)}\ndocument.\n{% endjavascript %}`;
+  const smallSource = `{% javascript %}\ndocument.\n{% endjavascript %}`;
+  const theme = await createTheme({ 'sections/oversized.liquid': largeSource });
+  const client = embeddedClient(theme.root, {
+    env: { LIQUID_MAX_EMBEDDED_DOCUMENT_CODE_UNITS: '1024' },
+  });
+
+  try {
+    await client.initialize({
+      textDocument: { completion: {}, publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('sections/oversized.liquid'), largeSource);
+    const limited = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) =>
+        params.uri === uri &&
+        params.diagnostics.some((diagnostic) => diagnostic.code === 'embedded-resource-limit'),
+    );
+    assert.match(limited.diagnostics[0].message, /document.*exceeds/i);
+    assert.equal(
+      await client.request('textDocument/completion', {
+        textDocument: { uri },
+        position: positionAt(largeSource, largeSource.indexOf('document.') + 'document.'.length),
+        context: { triggerKind: 2, triggerCharacter: '.' },
+      }),
+      null,
+    );
+
+    client.change(uri, smallSource, 2);
+    const completion = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position: positionAt(smallSource, smallSource.indexOf('document.') + 'document.'.length),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert(labels(completion).has('querySelector'));
+    const restored = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) =>
+        params.uri === uri &&
+        params.diagnostics.every((diagnostic) => diagnostic.code !== 'embedded-resource-limit'),
+    );
+    assert(restored.diagnostics.every((diagnostic) => diagnostic.source !== 'liquid-embedded-support'));
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('duplicate bundled asset tags are not merged into one virtual document', { timeout: 10_000 }, async () => {
   const source = `{% javascript %}\ndocument.\n{% endjavascript %}\n{% javascript %}\ndocument.\n{% endjavascript %}`;
   const theme = await createTheme({ 'sections/duplicate.liquid': source });

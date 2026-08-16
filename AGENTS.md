@@ -61,7 +61,7 @@ change, use the applicable subset of:
 ```sh
 cargo fmt --check
 cargo test
-node --check language-server/embedded-javascript-server.cjs
+node --check language-server/*.cjs
 npm test
 cargo build --release --target wasm32-wasip1
 git diff --check

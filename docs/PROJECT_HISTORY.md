@@ -330,12 +330,38 @@ package version when Zed writes the runtime script. A manual Zed host gate is
 recorded in [`RELEASE.md`](RELEASE.md) because no headless extension-host harness
 is available to this repository.
 
+### Maintainability and scale hardening — `0.25.0`
+
+The embedded support server was split into focused document-analysis,
+embedded-language, and theme-root modules that the Rust extension writes next
+to the generated entry point. Theme evidence and configured roots are cached and
+invalidated by watched-file and workspace-folder changes.
+
+A deterministic differential suite now compares reused incremental Liquid
+analysis with a clean parse across 500 randomized Unicode, CRLF, malformed-tag,
+and delimiter edits. Its first run exposed that `TextDocument.update` mutates the
+previous document in place; the server now snapshots the previous version before
+using change ranges, and disables analysis reuse whenever parser recovery makes
+its boundaries unreliable.
+
+Embedded JavaScript and stylesheet semantics now degrade explicitly for Liquid
+documents over 2 MiB or individual blocks over 512 KiB instead of risking a V8
+heap failure. Informational diagnostics explain the limit, and TypeScript module
+snapshots are separately bounded by file size and count. These defaults remain
+overridable for stress and development workloads.
+
+Repository contracts now validate release, runtime-package, npm, and grammar
+pins from the checked-in manifests. CI derives fresh-install versions from those
+pins, validates release tag/version agreement, retains both WASI artifacts for
+tag builds, and receives scheduled dependency update proposals.
+
 ## Current architecture
 
 ### Extension host
 
 `src/liquid.rs` installs pinned npm dependencies and generates two server entry
-points in Zed's extension work directory:
+points plus the embedded server's focused support modules in Zed's extension
+work directory:
 
 1. **Shopify Theme Language Server** (`liquid`) — owns Liquid/HTML/schema/CSS/
    JSON completion, diagnostics, hover, links, navigation, HTML tag editing,
@@ -346,7 +372,7 @@ points in Zed's extension work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.24.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.25.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

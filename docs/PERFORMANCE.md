@@ -20,8 +20,15 @@ The repeatable protocol workloads enforce these default budgets:
 - warm incremental JavaScript requests should remain comfortably below a 15 ms
   average locally, while tests report timings instead of imposing a
   hardware-sensitive latency assertion;
-- V8's old-generation heap remains capped at 128 MiB.
+- V8's old-generation heap remains capped at 128 MiB;
+- documents over 2 MiB and individual embedded blocks over 512 KiB degrade to
+  an informational diagnostic without loading their semantic service;
+- imported workspace modules are limited to 128 files of at most 1 MiB each.
 
+The resource limits can be overridden with
+`LIQUID_MAX_EMBEDDED_DOCUMENT_CODE_UNITS`,
+`LIQUID_MAX_EMBEDDED_BLOCK_CODE_UNITS`,
+`LIQUID_MAX_IMPORTED_FILE_CODE_UNITS`, and `LIQUID_MAX_IMPORTED_FILES`.
 The RSS limits can be adjusted for constrained or unusual hosts with
 `LIQUID_STRESS_RSS_LIMIT_MIB`, `LIQUID_STRESS_RSS_GROWTH_LIMIT_MIB`, and
 `LIQUID_STRESS_RESTART_GROWTH_LIMIT_MIB`.
@@ -31,7 +38,8 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 1. Share one incremental TypeScript language service across open Liquid files.
 2. Load TypeScript and CSS services only on the first relevant request.
 3. Debounce TypeScript diagnostics while preserving immediate completions.
-4. Cache standard-library and per-document script snapshots.
+4. Cache standard-library and per-document script snapshots while bounding
+   imported workspace snapshots by size and count.
 5. Preserve and offset parsed Liquid analysis for safe ranged edits outside
    semantic regions, avoiding a full parser pass; invalidate TypeScript only
    when a JavaScript range or source offset changes.
@@ -44,7 +52,9 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 8. Dispose TypeScript programs, document registries, and library snapshots 30
    seconds after the final JavaScript document becomes inactive. Reopening a
    JavaScript document recreates the service lazily.
-9. Keep the server under `--max-old-space-size=128`.
+9. Cache theme-root evidence and configured Theme Check roots, invalidating the
+   cache when watched files or workspace folders change.
+10. Keep the server under `--max-old-space-size=128`.
 
 ## Regression workloads
 
@@ -55,6 +65,10 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 3. 300 unique JavaScript updates with completion, definition, diagnostics, and
    stale-state assertions;
 4. TypeScript idle disposal followed by successful lazy recreation.
+
+Protocol and unit contracts additionally cover graceful oversized-document
+handling, workspace-root cache invalidation, and 500 deterministic differential
+incremental edits compared with clean parser results.
 
 RSS is sampled on Linux and macOS. Other platforms run the semantic, lifecycle,
 and process-survival contracts without RSS assertions. RSS is expected to

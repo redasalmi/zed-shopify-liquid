@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   schedule:
     - cron: "23 6 * * 1"
@@ -29,14 +30,14 @@ jobs:
           cache: npm
 
       - name: Use the repository's npm policy implementation
-        run: npm install --global npm@11.17.0
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')"
 
       - name: Install locked test dependencies
         run: npm ci
 
       - name: Validate JavaScript, protocol, query, and dependency contracts
         run: |
-          node --check language-server/embedded-javascript-server.cjs
+          node --check language-server/*.cjs
           npm test
           npm audit
 
@@ -61,30 +62,54 @@ jobs:
           cargo build --locked --release --target wasm32-wasip2
           git diff --check
 
+      - name: Prepare release WASM artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p dist
+          cp target/wasm32-wasip1/release/zed_liquid.wasm dist/liquid-wasip1.wasm
+          cp target/wasm32-wasip2/release/zed_liquid.wasm dist/liquid-wasip2.wasm
+
+      - name: Upload release WASM artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: liquid-${{ github.ref_name }}-wasm
+          path: dist/*.wasm
+          if-no-files-found: error
+          retention-days: 30
+
   fresh-runtime-dependencies:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
+      - name: Use the repository's npm policy implementation
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')"
+
       - name: Resolve and audit the dependency graph Zed installs at runtime
         env:
           RUNTIME_DIRECTORY: ${{ runner.temp }}/liquid-runtime
         run: |
+          export SHOPIFY_VERSION="$(node -p 'require("./package.json").devDependencies["@shopify/theme-language-server-node"]')"
+          export TYPESCRIPT_VERSION="$(node -p 'require("./package.json").devDependencies.typescript')"
           mkdir -p "$RUNTIME_DIRECTORY"
           cd "$RUNTIME_DIRECTORY"
           npm init --yes
           npm install \
             --ignore-scripts \
-            @shopify/theme-language-server-node@2.22.1 \
-            typescript@5.9.3
+            "@shopify/theme-language-server-node@$SHOPIFY_VERSION" \
+            "typescript@$TYPESCRIPT_VERSION"
           NODE_PATH="$RUNTIME_DIRECTORY/node_modules" node - <<'NODE'
           const assert = require('node:assert/strict');
-          assert.equal(require('@shopify/theme-language-server-node/package.json').version, '2.22.1');
-          assert.equal(require('typescript/package.json').version, '5.9.3');
+          assert.equal(require('@shopify/theme-language-server-node/package.json').version, process.env.SHOPIFY_VERSION);
+          assert.equal(require('typescript/package.json').version, process.env.TYPESCRIPT_VERSION);
           assert.equal(typeof require('@shopify/theme-language-server-node').startServer, 'function');
           assert.equal(typeof require('typescript').createLanguageService, 'function');
           NODE

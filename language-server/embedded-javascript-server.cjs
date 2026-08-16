@@ -1,6 +1,5 @@
 'use strict';
 
-const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { fileURLToPath, pathToFileURL } = require('node:url');
@@ -8,6 +7,7 @@ const {
   CompletionItemKind,
   CompletionItemTag,
   DiagnosticSeverity,
+  DidChangeWatchedFilesNotification,
   InsertTextFormat,
   ProposedFeatures,
   TextDocumentSyncKind,
@@ -15,13 +15,49 @@ const {
   createConnection,
 } = require('vscode-languageserver/node');
 const { TextDocument } = require('vscode-languageserver-textdocument');
+const {
+  containsOffset,
+  containsSpan,
+  embeddedJavaScript,
+  embeddedSource,
+  embeddedStylesheet,
+  intersectingRanges,
+  sameEmbeddedLanguage,
+} = require('./embedded-language.cjs');
+const {
+  analyzeLiquidDocument,
+  parseSchema,
+  rawTagNodes,
+  referencesInSource,
+  reusableAnalysis,
+  schemaSourceForSource,
+  settingsFrom,
+} = require('./liquid-document-analysis.cjs');
+const {
+  EMBEDDED_THEME_DIRECTORIES,
+  clearThemeRootCaches,
+  fileSupportsEmbeddedAssets,
+  fileSupportsLiquidDoc,
+  getWorkspaceRoots,
+  isWithinDirectory,
+  setWorkspaceRoots,
+  themeRootForFile,
+  themeRootForStandardFile,
+  updateWorkspaceRoots,
+} = require('./theme-roots.cjs');
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 const pendingDocumentChanges = new Map();
 const documents = new TextDocuments({
   create: (...args) => TextDocument.create(...args),
   update: (document, changes, version) => {
-    pendingDocumentChanges.set(document.uri, { previousDocument: document, changes });
+    const previousDocument = TextDocument.create(
+      document.uri,
+      document.languageId,
+      document.version,
+      document.getText(),
+    );
+    pendingDocumentChanges.set(document.uri, { previousDocument, changes });
     return TextDocument.update(document, changes, version);
   },
 });
@@ -29,6 +65,7 @@ const statesByUri = new Map();
 const statesByFileName = new Map();
 const validationTimers = new Map();
 const librarySnapshots = new Map();
+const importedSnapshotFiles = new Set();
 const configuredTypescriptIdleMilliseconds = Number.parseInt(
   process.env.LIQUID_TYPESCRIPT_IDLE_MS || '',
   10,
@@ -36,6 +73,25 @@ const configuredTypescriptIdleMilliseconds = Number.parseInt(
 const typescriptIdleMilliseconds = Number.isFinite(configuredTypescriptIdleMilliseconds)
   ? Math.max(0, configuredTypescriptIdleMilliseconds)
   : 30_000;
+
+function configuredPositiveLimit(name, fallback) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const maxEmbeddedDocumentCodeUnits = configuredPositiveLimit(
+  'LIQUID_MAX_EMBEDDED_DOCUMENT_CODE_UNITS',
+  2 * 1024 * 1024,
+);
+const maxEmbeddedBlockCodeUnits = configuredPositiveLimit(
+  'LIQUID_MAX_EMBEDDED_BLOCK_CODE_UNITS',
+  512 * 1024,
+);
+const maxImportedFileCodeUnits = configuredPositiveLimit(
+  'LIQUID_MAX_IMPORTED_FILE_CODE_UNITS',
+  1024 * 1024,
+);
+const maxImportedFiles = configuredPositiveLimit('LIQUID_MAX_IMPORTED_FILES', 128);
 const performanceLogging = process.env.LIQUID_PERFORMANCE_LOGGING === '1';
 let projectVersion = 0;
 let ts;
@@ -46,10 +102,10 @@ let languageService;
 let languageServiceIdleTimer;
 let liquidDocParamTypesPromise;
 let liquidDocLanguageTools;
-let liquidParser;
 let shuttingDown = false;
+let supportsWatchedFileRegistration = false;
+let supportsWorkspaceFolderChanges = false;
 let typescriptLibraryRoot;
-let workspaceRoots = [];
 
 function terminateAfterUnexpectedFailure(error) {
   console.error(error instanceof Error ? error.stack || error.message : String(error));
@@ -67,18 +123,6 @@ const BASIC_LIQUID_DOC_PARAM_TYPES = [
   ['boolean', undefined],
   ['object', 'A generic type used to represent any Liquid object or primitive value.'],
 ];
-const THEME_DIRECTORIES = new Set([
-  'assets',
-  'blocks',
-  'config',
-  'layout',
-  'locales',
-  'sections',
-  'snippets',
-  'templates',
-]);
-const EMBEDDED_THEME_DIRECTORIES = new Set(['blocks', 'sections', 'snippets']);
-const LIQUID_DOC_THEME_DIRECTORIES = new Set(['blocks', 'snippets']);
 
 async function readLiquidDocObjects() {
   const docsUpdater = require('@shopify/theme-check-docs-updater');
@@ -126,35 +170,6 @@ function liquidDocParamTypes() {
   return liquidDocParamTypesPromise;
 }
 
-function isWithinDirectory(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === '' ||
-    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  );
-}
-
-function themeRootForStandardFile(fileName, directories) {
-  const assetDirectory = path.dirname(fileName);
-  if (!directories.has(path.basename(assetDirectory))) return null;
-  if (workspaceRoots.length > 0 && !workspaceRoots.some((root) => isWithinDirectory(root, fileName))) {
-    return null;
-  }
-
-  const possibleThemeRoot = path.dirname(assetDirectory);
-  const hasThemeEvidence = ['.theme-check.yml', 'config', 'layout', 'templates'].some((entry) =>
-    fsSync.existsSync(path.join(possibleThemeRoot, entry)),
-  );
-  return hasThemeEvidence ? possibleThemeRoot : null;
-}
-
-function fileSupportsLiquidDoc(fileName) {
-  return Boolean(themeRootForStandardFile(fileName, LIQUID_DOC_THEME_DIRECTORIES));
-}
-
-function fileSupportsEmbeddedAssets(fileName) {
-  return Boolean(themeRootForStandardFile(fileName, EMBEDDED_THEME_DIRECTORIES));
-}
 
 function isInsideLiquidDoc(source, offset) {
   const rawTags = rawTagNodes(source);
@@ -254,138 +269,6 @@ async function liquidDocTypeCompletions(state, offset) {
   };
 }
 
-function ensureLiquidParser() {
-  if (!liquidParser) liquidParser = require('@shopify/liquid-html-parser');
-  return liquidParser;
-}
-
-function analyzeLiquidDocument(source) {
-  const rawTags = [];
-  const liquidExpressionRanges = [];
-  if (
-    !/{%-?\s*(?:comment|raw|doc|javascript|stylesheet|schema)\b/.test(source) &&
-    !/\b(?:section|block)\.settings\b/.test(source)
-  ) {
-    return { rawTags, liquidExpressionRanges };
-  }
-
-  try {
-    const { NodeTypes, toTolerantLiquidHtmlAST, walk } = ensureLiquidParser();
-    const ast = toTolerantLiquidHtmlAST(source);
-    walk(ast, (node) => {
-      if (
-        node.type === NodeTypes.LiquidRawTag &&
-        typeof node.name === 'string' &&
-        node.body?.position
-      ) {
-        rawTags.push({
-          name: node.name,
-          position: { ...node.position },
-          body: { position: { ...node.body.position } },
-        });
-        return;
-      }
-
-      const isVariableOutput = node.type === NodeTypes.LiquidVariableOutput;
-      const isExpressionTag =
-        node.type === NodeTypes.LiquidTag && node.name !== 'liquid' && node.name !== '#';
-      const isConditionalBranch = node.type === NodeTypes.LiquidBranch && node.name !== null;
-      if (
-        (isVariableOutput || isExpressionTag || isConditionalBranch) &&
-        node.markupPosition
-      ) {
-        liquidExpressionRanges.push(node.markupPosition);
-      }
-    });
-  } catch (_error) {
-    // Incomplete documents can still fail tolerant parsing. Semantic providers
-    // should not treat arbitrary text as Liquid or an embedded language then.
-  }
-  return { rawTags, liquidExpressionRanges };
-}
-
-function rawTagNodes(source) {
-  return analyzeLiquidDocument(source).rawTags;
-}
-
-function referencesInSource(source) {
-  const references = [];
-  try {
-    const { NodeTypes, toTolerantLiquidHtmlAST, walk } = ensureLiquidParser();
-    const ast = toTolerantLiquidHtmlAST(source);
-
-    walk(ast, (node) => {
-      if (node.type !== NodeTypes.LiquidTag || typeof node.markup === 'string') return;
-
-      let category;
-      let target;
-      if ((node.name === 'render' || node.name === 'include') && node.markup.snippet) {
-        category = 'snippets';
-        target = node.markup.snippet;
-      } else if (node.name === 'section' && node.markup.name) {
-        category = 'sections';
-        target = node.markup.name;
-      } else if (node.name === 'content_for' && node.markup.contentForType?.value === 'block') {
-        category = 'blocks';
-        target = node.markup.args?.find((argument) => argument.name === 'type')?.value;
-      }
-
-      if (category && target?.type === NodeTypes.String) {
-        references.push({
-          category,
-          name: target.value,
-          start: target.position.start,
-          end: target.position.end,
-        });
-      }
-    });
-  } catch (_error) {
-    // Incomplete documents can still fail tolerant parsing. Definition requests
-    // should simply fall through instead of disrupting the support server.
-  }
-  return references;
-}
-
-function configuredThemeRoot(contents) {
-  const match = /^\s*root\s*:\s*(?:"([^"]*)"|'([^']*)'|([^#\r\n]*))\s*(?:#.*)?$/m.exec(
-    contents,
-  );
-  if (!match) return null;
-  const value = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-  if (!value || value === '~' || value.toLowerCase() === 'null') return null;
-  return value;
-}
-
-async function configuredThemeRootForFile(fileName) {
-  let directory = path.dirname(fileName);
-  while (true) {
-    try {
-      const contents = await fs.readFile(path.join(directory, '.theme-check.yml'), 'utf8');
-      const root = configuredThemeRoot(contents);
-      if (root) return path.resolve(directory, root);
-    } catch (_error) {
-      // Continue toward the workspace root when this directory has no config.
-    }
-
-    const parent = path.dirname(directory);
-    if (parent === directory) return null;
-    directory = parent;
-  }
-}
-
-async function themeRootForFile(fileName) {
-  const configuredRoot = await configuredThemeRootForFile(fileName);
-  if (configuredRoot) return configuredRoot;
-
-  let directory = path.dirname(fileName);
-  while (true) {
-    if (THEME_DIRECTORIES.has(path.basename(directory))) return path.dirname(directory);
-    const parent = path.dirname(directory);
-    if (parent === directory) return null;
-    directory = parent;
-  }
-}
-
 async function definitionForReference(state, offset) {
   if (!state.definitionReferences) {
     state.definitionReferences = referencesInSource(state.document.getText());
@@ -419,105 +302,6 @@ async function definitionForReference(state, offset) {
   };
 }
 
-function embeddedLanguage(source, tagName, rawTags, enabled = true) {
-  // Shopify allows one bundled asset tag of each kind per file. Analyze only
-  // the first one so invalid duplicate tags cannot be merged into one virtual
-  // program or stylesheet with misleading cross-block semantics.
-  const ranges = (enabled ? rawTags.filter((node) => node.name === tagName).slice(0, 1) : []).map(
-    (node) => ({
-      start: node.body.position.start,
-      end: node.body.position.end,
-      containerStart: node.position.start,
-      containerEnd: node.position.end,
-    }),
-  );
-  // Shopify's parser knows which Liquid raw tags own their bodies, so tags in
-  // comments, raw content, and documentation examples cannot become false
-  // embedded-language regions. Preserve UTF-16 offsets and line endings so
-  // virtual-service ranges map directly back to Liquid.
-  return {
-    documentSource: ranges.length > 0 ? source : null,
-    source: ranges.length > 0 ? null : '',
-    ranges,
-    wrapInFunction: tagName === 'javascript',
-  };
-}
-
-function embeddedJavaScript(source, rawTags, enabled) {
-  return embeddedLanguage(source, 'javascript', rawTags, enabled);
-}
-
-function embeddedStylesheet(source, rawTags, enabled) {
-  return embeddedLanguage(source, 'stylesheet', rawTags, enabled);
-}
-
-function sameEmbeddedLanguage(left, right) {
-  if (left.ranges.length !== right.ranges.length) return false;
-  return left.ranges.every((range, index) => {
-    const candidate = right.ranges[index];
-    if (range.start !== candidate.start || range.end !== candidate.end) return false;
-    for (let offset = range.start; offset < range.end; offset += 1) {
-      if (left.documentSource.charCodeAt(offset) !== right.documentSource.charCodeAt(offset)) {
-        return false;
-      }
-    }
-    return true;
-  });
-}
-
-function maskSource(source) {
-  return source.replace(/[^\r\n]/g, ' ');
-}
-
-function injectAtStart(source, text) {
-  const masked = maskSource(source);
-  return text.length <= masked.length ? text + masked.slice(text.length) : masked;
-}
-
-function injectAtEnd(source, text) {
-  const masked = maskSource(source);
-  return text.length <= masked.length
-    ? masked.slice(0, masked.length - text.length) + text
-    : masked;
-}
-
-function embeddedSource(embedded) {
-  if (embedded.source !== null) return embedded.source;
-
-  const segments = [];
-  let cursor = 0;
-  for (const range of embedded.ranges) {
-    segments.push(maskSource(embedded.documentSource.slice(cursor, range.containerStart)));
-    const opening = embedded.documentSource.slice(range.containerStart, range.start);
-    const body = embedded.documentSource.slice(range.start, range.end);
-    const closing = embedded.documentSource.slice(range.end, range.containerEnd);
-    if (embedded.wrapInFunction) {
-      // Shopify evaluates bundled JavaScript inside an anonymous function. The
-      // injected tokens replace masked tag characters one-for-one, preserving
-      // every source offset used by TypeScript and the LSP.
-      segments.push(injectAtStart(opening, '(function(){'));
-      segments.push(body);
-      segments.push(injectAtEnd(closing, '})()'));
-    } else {
-      segments.push(maskSource(opening));
-      segments.push(body);
-      segments.push(maskSource(closing));
-    }
-    cursor = range.containerEnd;
-  }
-  segments.push(maskSource(embedded.documentSource.slice(cursor)));
-  embedded.source = segments.join('');
-  return embedded.source;
-}
-
-function containsOffset(ranges, offset) {
-  return ranges.some((range) => offset >= range.start && offset < range.end);
-}
-
-function containsSpan(ranges, start, end) {
-  return ranges.some((range) => start >= range.start && end <= range.end);
-}
-
 function fileNameForUri(uri) {
   try {
     return `${fileURLToPath(uri)}.__embedded.js`;
@@ -526,80 +310,12 @@ function fileNameForUri(uri) {
   }
 }
 
-function schemaSourceForSource(source, rawTags = rawTagNodes(source)) {
-  const schema = rawTags.find((node) => node.name === 'schema');
-  if (!schema?.body?.position) return null;
-  return source.slice(schema.body.position.start, schema.body.position.end);
-}
-
-function parseSchema(source) {
-  if (source === null) return null;
+function filePathsForWorkspaceUri(uri) {
   try {
-    return JSON.parse(source);
+    return [fileURLToPath(uri)];
   } catch (_error) {
-    return null;
+    return [];
   }
-}
-
-function settingsFrom(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (setting) =>
-      setting &&
-      typeof setting === 'object' &&
-      typeof setting.id === 'string' &&
-      setting.id.length > 0,
-  );
-}
-
-function reusableAnalysis(previous, change) {
-  if (!previous || !change || change.changes.length !== 1) return null;
-  const [contentChange] = change.changes;
-  if (!contentChange.range) return null;
-
-  const start = change.previousDocument.offsetAt(contentChange.range.start);
-  const end = change.previousDocument.offsetAt(contentChange.range.end);
-  const removed = change.previousDocument.getText().slice(start, end);
-  if (/[{}%]|settings/.test(removed) || /[{}%]|settings/.test(contentChange.text)) {
-    return null;
-  }
-
-  const overlapsRange = (range) => start < range.end && end > range.start;
-  const touchesRawTag = (range) =>
-    start === end ? start > range.start && start < range.end : overlapsRange(range);
-  const touchesExpression = (range) =>
-    start === end ? start >= range.start && start <= range.end : overlapsRange(range);
-  if (
-    previous.rawTags.some((node) => touchesRawTag(node.position)) ||
-    previous.liquidExpressionRanges.some(touchesExpression)
-  ) {
-    return null;
-  }
-
-  const delta = contentChange.text.length - (end - start);
-  const shiftPosition = (position) =>
-    position.start >= end
-      ? { start: position.start + delta, end: position.end + delta }
-      : position;
-  const rawTags = previous.rawTags.map((node) => ({
-    ...node,
-    position: shiftPosition(node.position),
-    body: {
-      ...node.body,
-      position: shiftPosition(node.body.position),
-    },
-  }));
-  const liquidExpressionRanges = previous.liquidExpressionRanges.map(shiftPosition);
-  return {
-    analysis: { rawTags, liquidExpressionRanges },
-    shiftedRawTagNames: new Set(
-      delta === 0
-        ? []
-        : previous.rawTags
-            .filter((node) => node.position.start >= end)
-            .map((node) => node.name),
-    ),
-  };
 }
 
 function settingsCompletions(state, offset) {
@@ -657,6 +373,46 @@ function settingsCompletions(state, offset) {
   return { isIncomplete: false, items };
 }
 
+function embeddedResourceLimits(source, rawTags, enabled) {
+  if (!enabled) return [];
+
+  const limits = [];
+  for (const tagName of ['javascript', 'stylesheet']) {
+    const tag = rawTags.find((candidate) => candidate.name === tagName);
+    if (!tag) continue;
+    const blockLength = tag.body.position.end - tag.body.position.start;
+    let message;
+    if (source.length > maxEmbeddedDocumentCodeUnits) {
+      message =
+        `Embedded ${tagName} support is disabled because this Liquid document ` +
+        `exceeds ${maxEmbeddedDocumentCodeUnits} UTF-16 code units.`;
+    } else if (blockLength > maxEmbeddedBlockCodeUnits) {
+      message =
+        `Embedded ${tagName} support is disabled because this block exceeds ` +
+        `${maxEmbeddedBlockCodeUnits} UTF-16 code units.`;
+    }
+    if (message) {
+      limits.push({ tagName, message, position: tag.body.position });
+    }
+  }
+  return limits;
+}
+
+function resourceLimitDiagnostics(state) {
+  return state.resourceLimits.map((limit) => ({
+    range: {
+      start: state.document.positionAt(limit.position.start),
+      end: state.document.positionAt(
+        Math.min(limit.position.end, limit.position.start + 1),
+      ),
+    },
+    severity: DiagnosticSeverity.Information,
+    code: 'embedded-resource-limit',
+    source: 'liquid-embedded-support',
+    message: limit.message,
+  }));
+}
+
 function updateState(document, change) {
   const previous = statesByUri.get(document.uri);
   const source = document.getText();
@@ -670,37 +426,53 @@ function updateState(document, change) {
     sourceFileName = document.uri;
   }
   const supportsEmbeddedAssets = fileSupportsEmbeddedAssets(sourceFileName);
-  const embedded = embeddedJavaScript(source, rawTags, supportsEmbeddedAssets);
-  const stylesheet = embeddedStylesheet(source, rawTags, supportsEmbeddedAssets);
+  const resourceLimits = embeddedResourceLimits(source, rawTags, supportsEmbeddedAssets);
+  const resourceLimitedTags = new Set(resourceLimits.map((limit) => limit.tagName));
+  const embedded = embeddedJavaScript(
+    source,
+    rawTags,
+    supportsEmbeddedAssets && !resourceLimitedTags.has('javascript'),
+  );
+  const stylesheet = embeddedStylesheet(
+    source,
+    rawTags,
+    supportsEmbeddedAssets && !resourceLimitedTags.has('stylesheet'),
+  );
   const schemaSource = schemaSourceForSource(source, rawTags);
   const scriptChanged = previous
     ? analysisReuse
-      ? analysisReuse.shiftedRawTagNames.has('javascript')
+      ? analysisReuse.shiftedRawTagNames.has('javascript') ||
+        previous.embedded.ranges.length !== embedded.ranges.length
       : !sameEmbeddedLanguage(previous.embedded, embedded)
     : embedded.ranges.length > 0;
   const stylesheetChanged = previous
     ? analysisReuse
-      ? analysisReuse.shiftedRawTagNames.has('stylesheet')
+      ? analysisReuse.shiftedRawTagNames.has('stylesheet') ||
+        previous.stylesheet.ranges.length !== stylesheet.ranges.length
       : !sameEmbeddedLanguage(previous.stylesheet, stylesheet)
     : stylesheet.ranges.length > 0;
   if (previous && !scriptChanged) embedded.source = previous.embedded.source;
   if (previous && !stylesheetChanged) stylesheet.source = previous.stylesheet.source;
   const hadEmbeddedJavaScript = (previous?.embedded.ranges.length ?? 0) > 0;
+  const hadResourceLimits = (previous?.resourceLimits.length ?? 0) > 0;
   const state = {
     document,
     embedded,
     stylesheet,
+    resourceLimits,
     sourceFileName,
     fileName: previous?.fileName || fileNameForUri(document.uri),
     rawTags,
+    analysisReusable: analysis.analysisReusable,
     liquidExpressionRanges: analysis.liquidExpressionRanges,
     schema:
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
     schemaSource,
     hadEmbeddedJavaScript,
+    hadResourceLimits,
     cssDocument: stylesheetChanged ? undefined : previous?.cssDocument,
     cssStylesheet: stylesheetChanged ? undefined : previous?.cssStylesheet,
-    needsValidation: !previous || scriptChanged,
+    needsValidation: !previous || scriptChanged || resourceLimits.length > 0 || hadResourceLimits,
     scriptSnapshot: scriptChanged ? undefined : previous?.scriptSnapshot,
     scriptVersion: (previous?.scriptVersion ?? 0) + (scriptChanged ? 1 : 0),
   };
@@ -720,7 +492,7 @@ function allowedTypeScriptPath(fileName) {
   }
   return (
     isWithinDirectory(typescriptLibraryRoot, fileName) ||
-    workspaceRoots.some((root) => isWithinDirectory(root, fileName))
+    getWorkspaceRoots().some((root) => isWithinDirectory(root, fileName))
   );
 }
 
@@ -728,7 +500,7 @@ function allowedTypeScriptDirectory(directory) {
   if (!typescriptLibraryRoot) {
     typescriptLibraryRoot = path.dirname(require.resolve('typescript/lib/typescript.js'));
   }
-  return [typescriptLibraryRoot, ...workspaceRoots].some(
+  return [typescriptLibraryRoot, ...getWorkspaceRoots()].some(
     (root) => isWithinDirectory(root, directory) || isWithinDirectory(directory, root),
   );
 }
@@ -752,8 +524,18 @@ const languageServiceHost = {
 
     let snapshot = librarySnapshots.get(fileName);
     if (snapshot) return snapshot;
+    if (!allowedTypeScriptPath(fileName)) return undefined;
+
     const contents = ts.sys.readFile(fileName);
     if (contents === undefined) return undefined;
+    const isTypeScriptLibrary = isWithinDirectory(typescriptLibraryRoot, fileName);
+    if (!isTypeScriptLibrary) {
+      if (contents.length > maxImportedFileCodeUnits) return undefined;
+      if (!importedSnapshotFiles.has(fileName) && importedSnapshotFiles.size >= maxImportedFiles) {
+        return undefined;
+      }
+      importedSnapshotFiles.add(fileName);
+    }
     snapshot = ts.ScriptSnapshot.fromString(contents);
     librarySnapshots.set(fileName, snapshot);
     return snapshot;
@@ -795,6 +577,7 @@ function disposeLanguageService() {
   documentRegistry = undefined;
   compilerOptions = undefined;
   librarySnapshots.clear();
+  importedSnapshotFiles.clear();
   languageServiceIdleTimer = undefined;
   if (performanceLogging) connection.console.info('TypeScript language service disposed');
 }
@@ -892,12 +675,6 @@ function stylesheetDefinition(state, offset) {
   const start = document.offsetAt(definition.range.start);
   const end = document.offsetAt(definition.range.end);
   return containsSpan(state.stylesheet.ranges, start, end) ? definition : null;
-}
-
-function intersectingRanges(ranges, start, end) {
-  return ranges
-    .map((range) => ({ start: Math.max(range.start, start), end: Math.min(range.end, end) }))
-    .filter((range) => range.start < range.end);
 }
 
 function embeddedRangeFormatting(state, params) {
@@ -1014,8 +791,14 @@ function diagnosticSeverity(category) {
 
 function validate(uri) {
   const state = statesByUri.get(uri);
-  if (!state || state.embedded.ranges.length === 0) {
+  if (!state) {
     connection.sendDiagnostics({ uri, diagnostics: [] });
+    return;
+  }
+
+  const limitedDiagnostics = resourceLimitDiagnostics(state);
+  if (state.embedded.ranges.length === 0) {
+    connection.sendDiagnostics({ uri, diagnostics: limitedDiagnostics });
     return;
   }
 
@@ -1047,15 +830,18 @@ function validate(uri) {
       message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
     }));
 
-  connection.sendDiagnostics({ uri, diagnostics });
+  connection.sendDiagnostics({ uri, diagnostics: [...limitedDiagnostics, ...diagnostics] });
 }
 
 function scheduleValidation(state) {
   if (state.embedded.ranges.length === 0) {
-    if (state.hadEmbeddedJavaScript) {
+    if (state.hadEmbeddedJavaScript || state.hadResourceLimits || state.resourceLimits.length > 0) {
       clearTimeout(validationTimers.get(state.document.uri));
       validationTimers.delete(state.document.uri);
-      connection.sendDiagnostics({ uri: state.document.uri, diagnostics: [] });
+      connection.sendDiagnostics({
+        uri: state.document.uri,
+        diagnostics: resourceLimitDiagnostics(state),
+      });
     }
     return;
   }
@@ -1070,24 +856,26 @@ function scheduleValidation(state) {
         validate(state.document.uri);
       } catch (error) {
         connection.console.error(String(error));
-        connection.sendDiagnostics({ uri: state.document.uri, diagnostics: [] });
+        const current = statesByUri.get(state.document.uri);
+        connection.sendDiagnostics({
+          uri: state.document.uri,
+          diagnostics: current ? resourceLimitDiagnostics(current) : [],
+        });
       }
     }, 350),
   );
 }
 
 connection.onInitialize((params) => {
+  supportsWatchedFileRegistration = Boolean(
+    params.capabilities.workspace?.didChangeWatchedFiles?.dynamicRegistration,
+  );
+  supportsWorkspaceFolderChanges = Boolean(params.capabilities.workspace?.workspaceFolders);
   const rootUris = [
     ...(params.workspaceFolders || []).map((folder) => folder.uri),
     params.rootUri,
   ].filter(Boolean);
-  workspaceRoots = rootUris.flatMap((uri) => {
-    try {
-      return [fileURLToPath(uri)];
-    } catch (_error) {
-      return [];
-    }
-  });
+  setWorkspaceRoots(rootUris.flatMap(filePathsForWorkspaceUri));
 
   return {
     capabilities: {
@@ -1099,6 +887,9 @@ connection.onInitialize((params) => {
       definitionProvider: true,
       documentRangeFormattingProvider: true,
       hoverProvider: true,
+      workspace: {
+        workspaceFolders: { supported: true, changeNotifications: true },
+      },
     },
     serverInfo: {
       name: 'liquid-embedded-support',
@@ -1106,6 +897,30 @@ connection.onInitialize((params) => {
     },
   };
 });
+
+connection.onInitialized(() => {
+  if (supportsWorkspaceFolderChanges) {
+    connection.workspace.onDidChangeWorkspaceFolders(({ added, removed }) => {
+      updateWorkspaceRoots(
+        added.flatMap((folder) => filePathsForWorkspaceUri(folder.uri)),
+        removed.flatMap((folder) => filePathsForWorkspaceUri(folder.uri)),
+      );
+    });
+  }
+  if (supportsWatchedFileRegistration) {
+    connection.client
+      .register(DidChangeWatchedFilesNotification.type, {
+        watchers: [
+          { globPattern: '**/.theme-check.yml' },
+          { globPattern: '**/config/**' },
+          { globPattern: '**/layout/**' },
+          { globPattern: '**/templates/**' },
+        ],
+      })
+      .catch((error) => connection.console.warn(`Unable to watch theme roots: ${error}`));
+  }
+});
+connection.onDidChangeWatchedFiles(() => clearThemeRootCaches());
 
 connection.onCompletion(async (params, cancellationToken) => {
   const uri = params.textDocument.uri;
@@ -1281,6 +1096,7 @@ connection.onShutdown(() => {
   cancelLanguageServiceDisposal();
   languageService?.dispose();
   librarySnapshots.clear();
+  importedSnapshotFiles.clear();
 });
 
 documents.listen(connection);

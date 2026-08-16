@@ -23,6 +23,20 @@ const TYPESCRIPT_SERVER_PATH: &str = "node_modules/typescript/lib/typescript.js"
 // embedded language server requires the stable JavaScript language-service API.
 const TYPESCRIPT_PACKAGE_VERSION: &str = "5.9.3";
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
+const EMBEDDED_SUPPORT_FILES: &[(&str, &str)] = &[
+    (
+        "embedded-language.cjs",
+        include_str!("../language-server/embedded-language.cjs"),
+    ),
+    (
+        "liquid-document-analysis.cjs",
+        include_str!("../language-server/liquid-document-analysis.cjs"),
+    ),
+    (
+        "theme-roots.cjs",
+        include_str!("../language-server/theme-roots.cjs"),
+    ),
+];
 const SERVER_WRAPPER: &str = r#"const { startServer } = require('./node_modules/@shopify/theme-language-server-node/dist/index.js');
 
 // Provider-level failures are handled by the LSP framework. A truly uncaught
@@ -168,6 +182,11 @@ impl LiquidExtension {
             fs::write(EMBEDDED_SERVER_PATH, embedded_server).map_err(|error| {
                 format!("failed to write embedded JavaScript language server: {error}")
             })?;
+            for (path, source) in EMBEDDED_SUPPORT_FILES {
+                fs::write(path, source).map_err(|error| {
+                    format!("failed to write embedded support module '{path}': {error}")
+                })?;
+            }
 
             env::current_dir()
                 .map(|path| {
@@ -341,17 +360,29 @@ mod tests {
 
     #[test]
     fn embedded_server_scopes_semantic_features_to_supported_regions() {
-        assert!(
-            EMBEDDED_SERVER.contains("embeddedLanguage(source, 'javascript', rawTags, enabled)")
-        );
-        assert!(
-            EMBEDDED_SERVER.contains("embeddedLanguage(source, 'stylesheet', rawTags, enabled)")
-        );
+        let embedded_language = EMBEDDED_SUPPORT_FILES
+            .iter()
+            .find_map(|(path, source)| (*path == "embedded-language.cjs").then_some(*source))
+            .unwrap();
+        let liquid_analysis = EMBEDDED_SUPPORT_FILES
+            .iter()
+            .find_map(|(path, source)| (*path == "liquid-document-analysis.cjs").then_some(*source))
+            .unwrap();
+        let theme_roots = EMBEDDED_SUPPORT_FILES
+            .iter()
+            .find_map(|(path, source)| (*path == "theme-roots.cjs").then_some(*source))
+            .unwrap();
+
+        assert!(EMBEDDED_SERVER.contains("require('./embedded-language.cjs')"));
+        assert!(EMBEDDED_SERVER.contains("require('./liquid-document-analysis.cjs')"));
+        assert!(EMBEDDED_SERVER.contains("require('./theme-roots.cjs')"));
+        assert!(embedded_language.contains("embeddedLanguage(source, 'javascript'"));
+        assert!(embedded_language.contains("embeddedLanguage(source, 'stylesheet'"));
+        assert!(embedded_language.contains("slice(0, 1)"));
+        assert!(embedded_language.contains("(function(){"));
+        assert!(liquid_analysis.contains("function rawTagNodes(source)"));
+        assert!(theme_roots.contains("configuredThemeRootForFile"));
         assert!(EMBEDDED_SERVER.contains("EMBEDDED_THEME_DIRECTORIES"));
-        assert!(EMBEDDED_SERVER.contains("slice(0, 1)"));
-        assert!(EMBEDDED_SERVER.contains("(function(){"));
-        assert!(EMBEDDED_SERVER.contains("configuredThemeRootForFile"));
-        assert!(EMBEDDED_SERVER.contains("function rawTagNodes(source)"));
         assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
         assert!(EMBEDDED_SERVER.contains("getCompletionEntryDetails"));
         assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
@@ -372,7 +403,7 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("stylesheetDefinition"));
         assert!(EMBEDDED_SERVER.contains("embeddedRangeFormatting"));
         assert!(EMBEDDED_SERVER.contains("vscode-css-languageservice"));
-        assert!(EMBEDDED_SERVER.contains("toTolerantLiquidHtmlAST"));
+        assert!(liquid_analysis.contains("toTolerantLiquidHtmlAST"));
         assert!(EMBEDDED_SERVER.contains("pathToFileURL(candidate)"));
     }
 

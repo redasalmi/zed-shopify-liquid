@@ -64,7 +64,9 @@ to retain Shopify's theme JSON completion and navigation.
 
 The embedded JavaScript server loads TypeScript only when a JavaScript block is
 open and releases its analysis state 30 seconds after the final JavaScript
-document becomes inactive. For very large themes, setting
+document becomes inactive. To protect the editor process, documents over 2 MiB
+or embedded blocks over 512 KiB receive an informational diagnostic instead of
+loading embedded semantics. For very large themes, setting
 `themeCheck.preloadOnBoot` to `false`
 reduces Shopify language-server startup work and memory at the cost of making
 some whole-theme navigation operations slower on first use. Setting
