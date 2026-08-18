@@ -43,18 +43,23 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 5. Preserve and offset parsed Liquid analysis for safe ranged edits outside
    semantic regions, avoiding a full parser pass; invalidate TypeScript only
    when a JavaScript range or source offset changes.
-6. Materialize full-length JavaScript and CSS virtual documents only when a
+6. Compare incremental embedded changes against their affected ranges before
+   scanning complete CSS/JavaScript bodies; unchanged virtual documents are
+   reused for edits outside embedded regions.
+7. Materialize full-length JavaScript and CSS virtual documents only when a
    service requests them, then reuse unchanged sources, CSS documents, and
    parsed CSS stylesheets.
-7. Restrict TypeScript filesystem access to its standard libraries and current
+8. Restrict TypeScript filesystem access to its standard libraries and current
    workspace roots, preventing imports from expanding analysis outside the
-   active project.
-8. Dispose TypeScript programs, document registries, and library snapshots 30
+   active project. Imported workspace snapshots are invalidated by watched
+   JavaScript/TypeScript file changes and carry independent script versions.
+9. Dispose TypeScript programs, document registries, and library snapshots 30
    seconds after the final JavaScript document becomes inactive. Reopening a
    JavaScript document recreates the service lazily.
-9. Cache theme-root evidence and configured Theme Check roots, invalidating the
-   cache when watched files or workspace folders change.
-10. Keep the server under `--max-old-space-size=128`.
+10. Cache LiquidDoc tags, inline-block setting items, and theme-root lookups;
+    theme-root caches use bounded LRU-style eviction and invalidate when
+    watched files or workspace folders change.
+11. Keep the server under `--max-old-space-size=128`.
 
 ## Regression workloads
 
@@ -67,7 +72,8 @@ The RSS limits can be adjusted for constrained or unusual hosts with
 4. TypeScript idle disposal followed by successful lazy recreation.
 
 Protocol and unit contracts additionally cover graceful oversized-document
-handling, workspace-root cache invalidation, and 500 deterministic differential
+handling, workspace-root cache invalidation, imported workspace-module refresh,
+change-aware embedded-range comparison, and 500 deterministic differential
 incremental edits compared with clean parser results.
 
 RSS is sampled on Linux and macOS. Other platforms run the semantic, lifecycle,

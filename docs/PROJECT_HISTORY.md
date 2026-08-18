@@ -383,6 +383,19 @@ The remaining host differences from Shopify's VS Code extension are documented
 in the README: Zed has no equivalent Theme Graph UI or browser/VFS adapter, and
 full-document Liquid formatting remains owned by Zed's Prettier integration.
 
+### Embedded-service optimization follow-up
+
+LiquidDoc completion now reuses the parsed raw-tag state, and completion prefix
+scans are limited to the current line. Inline-block setting items and LiquidDoc
+tag items are cached per document/schema state. Embedded-language comparisons
+use incremental change ranges before falling back to body scans, and active
+JavaScript states are tracked directly for TypeScript project enumeration.
+
+Workspace JavaScript/TypeScript snapshots now carry versions and are
+invalidated when watched files change. Theme-root caches use bounded LRU-style
+eviction. The regression suite covers imported-module refresh and
+change-aware embedded-range reuse.
+
 ## Current architecture
 
 ### Extension host

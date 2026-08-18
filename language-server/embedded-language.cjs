@@ -32,18 +32,43 @@ function embeddedStylesheet(source, rawTags, enabled) {
   return embeddedLanguage(source, 'stylesheet', rawTags, enabled);
 }
 
-function sameEmbeddedLanguage(left, right) {
+function sameEmbeddedLanguage(left, right, documentChange) {
   if (left.ranges.length !== right.ranges.length) return false;
-  return left.ranges.every((range, index) => {
+  if (!left.ranges.every((range, index) => {
     const candidate = right.ranges[index];
-    if (range.start !== candidate.start || range.end !== candidate.end) return false;
+    return range.start === candidate.start && range.end === candidate.end;
+  })) {
+    return false;
+  }
+
+  const changes = documentChange?.changes;
+  if (changes?.length > 0 && documentChange.previousDocument) {
+    // When an incremental edit leaves every embedded range at the same source
+    // offset and does not touch a range, the virtual document is unchanged.
+    // Avoid rescanning the complete CSS/JavaScript block in that common case.
+    return changes.every((change) => {
+      if (!change.range) return false;
+      const start = documentChange.previousDocument.offsetAt(change.range.start);
+      const end = documentChange.previousDocument.offsetAt(change.range.end);
+      return !left.ranges.some((range) =>
+        start < range.end && end > range.start ||
+        start === end && start >= range.start && start <= range.end,
+      );
+    });
+  }
+
+  if (changes?.length === 0 || documentChange?.previousDocument?.getText() === right.documentSource) {
+    return true;
+  }
+
+  for (const range of left.ranges) {
     for (let offset = range.start; offset < range.end; offset += 1) {
       if (left.documentSource.charCodeAt(offset) !== right.documentSource.charCodeAt(offset)) {
         return false;
       }
     }
-    return true;
-  });
+  }
+  return true;
 }
 
 function maskSource(source) {

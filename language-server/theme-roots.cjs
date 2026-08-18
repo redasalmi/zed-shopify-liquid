@@ -19,9 +19,38 @@ const LIQUID_DOC_THEME_DIRECTORIES = new Set(['blocks', 'snippets']);
 
 let workspaceRoots = [];
 let workspaceRootsInitialized = false;
+const MAX_THEME_ROOT_CACHE_ENTRIES = 2048;
+const CACHE_MISS = Symbol('cache-miss');
 const themeEvidenceCache = new Map();
+const directoryKeys = new WeakMap();
 const standardFileRootCache = new Map();
 const inferredThemeRootCache = new Map();
+
+function cacheGet(cache, key) {
+  if (!cache.has(key)) return CACHE_MISS;
+  const value = cache.get(key);
+  // Refresh the entry so frequently used workspace paths survive eviction.
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function cacheSet(cache, key, value) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > MAX_THEME_ROOT_CACHE_ENTRIES) {
+    cache.delete(cache.keys().next().value);
+  }
+}
+
+function keyForDirectories(directories) {
+  let key = directoryKeys.get(directories);
+  if (!key) {
+    key = [...directories].sort().join(',');
+    directoryKeys.set(directories, key);
+  }
+  return key;
+}
 
 function isWithinDirectory(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -70,18 +99,19 @@ function belongsToWorkspace(fileName) {
 }
 
 function hasThemeEvidence(root) {
-  if (themeEvidenceCache.has(root)) return themeEvidenceCache.get(root);
+  const cached = cacheGet(themeEvidenceCache, root);
+  if (cached !== CACHE_MISS) return cached;
   const result = ['.theme-check.yml', 'config', 'layout', 'templates'].some((entry) =>
     fsSync.existsSync(path.join(root, entry)),
   );
-  themeEvidenceCache.set(root, result);
+  cacheSet(themeEvidenceCache, root, result);
   return result;
 }
 
 function themeRootForStandardFile(fileName, directories) {
-  const directoryKey = [...directories].sort().join(',');
-  const cacheKey = `${directoryKey}\0${fileName}`;
-  if (standardFileRootCache.has(cacheKey)) return standardFileRootCache.get(cacheKey);
+  const cacheKey = `${keyForDirectories(directories)}\0${fileName}`;
+  const cached = cacheGet(standardFileRootCache, cacheKey);
+  if (cached !== CACHE_MISS) return cached;
 
   const assetDirectory = path.dirname(fileName);
   let result = null;
@@ -92,7 +122,7 @@ function themeRootForStandardFile(fileName, directories) {
     const possibleThemeRoot = path.dirname(assetDirectory);
     if (hasThemeEvidence(possibleThemeRoot)) result = possibleThemeRoot;
   }
-  standardFileRootCache.set(cacheKey, result);
+  cacheSet(standardFileRootCache, cacheKey, result);
   return result;
 }
 
@@ -156,10 +186,11 @@ async function computeThemeRootForFile(fileName) {
 }
 
 async function themeRootForFile(fileName) {
-  if (!inferredThemeRootCache.has(fileName)) {
-    inferredThemeRootCache.set(fileName, computeThemeRootForFile(fileName));
-  }
-  return inferredThemeRootCache.get(fileName);
+  const cached = cacheGet(inferredThemeRootCache, fileName);
+  if (cached !== CACHE_MISS) return cached;
+  const result = computeThemeRootForFile(fileName);
+  cacheSet(inferredThemeRootCache, fileName, result);
+  return result;
 }
 
 module.exports = {

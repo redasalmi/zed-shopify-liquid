@@ -27,7 +27,6 @@ const {
 const {
   analyzeLiquidDocument,
   parseSchema,
-  rawTagNodes,
   referencesInSource,
   reusableAnalysis,
   schemaSourceForSource,
@@ -63,9 +62,11 @@ const documents = new TextDocuments({
 });
 const statesByUri = new Map();
 const statesByFileName = new Map();
+const activeJavaScriptStates = new Set();
 const validationTimers = new Map();
 const librarySnapshots = new Map();
 const importedSnapshotFiles = new Set();
+const importedSnapshotVersions = new Map();
 const configuredTypescriptIdleMilliseconds = Number.parseInt(
   process.env.LIQUID_TYPESCRIPT_IDLE_MS || '',
   10,
@@ -102,6 +103,7 @@ let languageService;
 let languageServiceIdleTimer;
 let liquidDocParamTypesPromise;
 let liquidDocLanguageTools;
+let liquidDocTagCompletionItems;
 let shuttingDown = false;
 let supportsWatchedFileRegistration = false;
 let supportsWorkspaceFolderChanges = false;
@@ -170,26 +172,13 @@ function liquidDocParamTypes() {
   return liquidDocParamTypesPromise;
 }
 
-
-function isInsideLiquidDoc(source, offset) {
-  const rawTags = rawTagNodes(source);
-  const ignoredRanges = rawTags
-    .filter((node) => node.name !== 'doc')
-    .map((node) => node.position);
-  const tagPattern = /{%-?\s*(end)?doc\s*-?%}/g;
-  let active = false;
-  let match;
-  while ((match = tagPattern.exec(source)) !== null && match.index < offset) {
-    if (
-      ignoredRanges.some(
-        (range) => match.index >= range.start && match.index < range.end,
-      )
-    ) {
-      continue;
-    }
-    active = !match[1];
-  }
-  return active;
+function isInsideLiquidDoc(rawTags, offset) {
+  return rawTags.some(
+    (node) =>
+      node.name === 'doc' &&
+      offset >= node.body.position.start &&
+      offset <= node.body.position.end,
+  );
 }
 
 function liquidDocTagCompletions(state, offset, context) {
@@ -201,21 +190,19 @@ function liquidDocTagCompletions(state, offset, context) {
   }
 
   const source = state.document.getText();
-  if (!isInsideLiquidDoc(source, offset)) return null;
+  if (!isInsideLiquidDoc(state.rawTags, offset)) return null;
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
   if (!/^\s*@$/.test(source.slice(lineStart, offset))) return null;
 
-  if (!liquidDocLanguageTools) {
-    liquidDocLanguageTools = require(
-      '@shopify/theme-language-server-common/dist/utils/liquidDoc',
-    );
-  }
-  const { formatLiquidDocTagHandle, SUPPORTED_LIQUID_DOC_TAG_HANDLES } =
-    liquidDocLanguageTools;
-
-  return {
-    isIncomplete: false,
-    items: Object.entries(SUPPORTED_LIQUID_DOC_TAG_HANDLES).map(
+  if (!liquidDocTagCompletionItems) {
+    if (!liquidDocLanguageTools) {
+      liquidDocLanguageTools = require(
+        '@shopify/theme-language-server-common/dist/utils/liquidDoc',
+      );
+    }
+    const { formatLiquidDocTagHandle, SUPPORTED_LIQUID_DOC_TAG_HANDLES } =
+      liquidDocLanguageTools;
+    liquidDocTagCompletionItems = Object.entries(SUPPORTED_LIQUID_DOC_TAG_HANDLES).map(
       ([label, { description, example, template }]) => ({
         label,
         kind: CompletionItemKind.EnumMember,
@@ -226,18 +213,20 @@ function liquidDocTagCompletions(state, offset, context) {
         insertText: template,
         insertTextFormat: InsertTextFormat.Snippet,
       }),
-    ),
-  };
+    );
+  }
+
+  return { isIncomplete: false, items: liquidDocTagCompletionItems };
 }
 
 async function liquidDocTypeCompletions(state, offset) {
   if (!fileSupportsLiquidDoc(state.sourceFileName || state.fileName)) return null;
 
   const source = state.document.getText();
-  if (!isInsideLiquidDoc(source, offset)) return null;
+  if (!isInsideLiquidDoc(state.rawTags, offset)) return null;
 
-  const beforeCursor = source.slice(0, offset);
-  const currentLine = beforeCursor.slice(beforeCursor.lastIndexOf('\n') + 1);
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+  const currentLine = source.slice(lineStart, offset);
   const typeMatch = /^(\s*@param\s+\{\s*)([a-zA-Z_]*(?:\[\]?)?)$/.exec(currentLine);
   if (!typeMatch) return null;
 
@@ -325,9 +314,34 @@ function filePathsForWorkspaceUri(uri) {
   }
 }
 
+function invalidateImportedSnapshots(changes = []) {
+  let invalidated = false;
+  for (const change of changes) {
+    let fileName;
+    try {
+      fileName = path.resolve(fileURLToPath(change.uri));
+    } catch (_error) {
+      continue;
+    }
+    const removedSnapshot = librarySnapshots.delete(fileName);
+    const removedImportedFile = importedSnapshotFiles.delete(fileName);
+    if (removedSnapshot || removedImportedFile) {
+      importedSnapshotVersions.set(
+        fileName,
+        (importedSnapshotVersions.get(fileName) || 0) + 1,
+      );
+      invalidated = true;
+    }
+    if (/\.(?:(?:c|m)?js|jsx|tsx?)$/i.test(fileName)) invalidated = true;
+  }
+  if (invalidated) projectVersion += 1;
+}
+
 function settingsCompletions(state, offset) {
+  const source = state.document.getText();
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
   const match = /\b(section|block)\.settings\.([a-zA-Z0-9_-]*)$/.exec(
-    state.document.getText().slice(0, offset),
+    source.slice(lineStart, offset),
   );
   const isLiquidExpression = state.liquidExpressionRanges.some(
     (range) => offset >= range.start && offset <= range.end,
@@ -337,7 +351,6 @@ function settingsCompletions(state, offset) {
   const objectName = match[1];
   const partial = match[2];
   const pathName = (state.sourceFileName || state.fileName).replace(/\\/g, '/');
-  let settings = [];
 
   // Shopify's server already completes section settings and settings in Theme
   // Block files. Only supplement its upstream gap for inline blocks declared
@@ -350,34 +363,38 @@ function settingsCompletions(state, offset) {
     return null;
   }
 
-  // The exact block.type cannot always be narrowed statically. Offer the union
-  // so every declared block setting remains discoverable; duplicate ids are
-  // collapsed below.
-  settings = Array.isArray(state.schema.blocks)
-    ? state.schema.blocks.flatMap((block) => settingsFrom(block?.settings))
-    : [];
+  if (!state.inlineBlockSettingItems) {
+    // The exact block.type cannot always be narrowed statically. Offer the
+    // union so every declared block setting remains discoverable; duplicate
+    // ids are collapsed below. Cache the complete items for this document
+    // version so each completion only filters the current prefix.
+    const settings = Array.isArray(state.schema.blocks)
+      ? state.schema.blocks.flatMap((block) => settingsFrom(block?.settings))
+      : [];
+    const uniqueSettings = new Map(settings.map((setting) => [setting.id, setting]));
+    state.inlineBlockSettingItems = [...uniqueSettings.values()]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((setting) => {
+        const item = {
+          label: setting.id,
+          kind: CompletionItemKind.Property,
+        };
+        if (typeof setting.type === 'string') item.detail = `Shopify ${setting.type} setting`;
+        const documentation = [setting.label, setting.info]
+          .filter(
+            (value) =>
+              typeof value === 'string' && value.length > 0 && !value.startsWith('t:'),
+          )
+          .join('\n\n');
+        if (documentation) item.documentation = documentation;
+        return item;
+      });
+  }
 
-  const uniqueSettings = new Map(settings.map((setting) => [setting.id, setting]));
-  const items = [...uniqueSettings.values()]
-    .filter((setting) => setting.id.startsWith(partial))
-    .sort((left, right) => left.id.localeCompare(right.id))
-    .map((setting) => {
-      const item = {
-        label: setting.id,
-        kind: CompletionItemKind.Property,
-      };
-      if (typeof setting.type === 'string') item.detail = `Shopify ${setting.type} setting`;
-      const documentation = [setting.label, setting.info]
-        .filter(
-          (value) =>
-            typeof value === 'string' && value.length > 0 && !value.startsWith('t:'),
-        )
-        .join('\n\n');
-      if (documentation) item.documentation = documentation;
-      return item;
-    });
-
-  return { isIncomplete: false, items };
+  return {
+    isIncomplete: false,
+    items: state.inlineBlockSettingItems.filter((item) => item.label.startsWith(partial)),
+  };
 }
 
 function embeddedResourceLimits(source, rawTags, enabled) {
@@ -450,13 +467,13 @@ function updateState(document, change) {
     ? analysisReuse
       ? analysisReuse.shiftedRawTagNames.has('javascript') ||
         previous.embedded.ranges.length !== embedded.ranges.length
-      : !sameEmbeddedLanguage(previous.embedded, embedded)
+      : !sameEmbeddedLanguage(previous.embedded, embedded, change)
     : embedded.ranges.length > 0;
   const stylesheetChanged = previous
     ? analysisReuse
       ? analysisReuse.shiftedRawTagNames.has('stylesheet') ||
         previous.stylesheet.ranges.length !== stylesheet.ranges.length
-      : !sameEmbeddedLanguage(previous.stylesheet, stylesheet)
+      : !sameEmbeddedLanguage(previous.stylesheet, stylesheet, change)
     : stylesheet.ranges.length > 0;
   if (previous && !scriptChanged) embedded.source = previous.embedded.source;
   if (previous && !stylesheetChanged) stylesheet.source = previous.stylesheet.source;
@@ -475,6 +492,8 @@ function updateState(document, change) {
     schema:
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
     schemaSource,
+    inlineBlockSettingItems:
+      schemaSource === previous?.schemaSource ? previous.inlineBlockSettingItems : undefined,
     hadEmbeddedJavaScript,
     hadResourceLimits,
     cssDocument: stylesheetChanged ? undefined : previous?.cssDocument,
@@ -484,6 +503,8 @@ function updateState(document, change) {
     scriptVersion: (previous?.scriptVersion ?? 0) + (scriptChanged ? 1 : 0),
   };
 
+  if (previous?.embedded.ranges.length > 0) activeJavaScriptStates.delete(previous);
+  if (embedded.ranges.length > 0) activeJavaScriptStates.add(state);
   statesByUri.set(document.uri, state);
   statesByFileName.set(state.fileName, state);
   if (scriptChanged) projectVersion += 1;
@@ -514,11 +535,13 @@ function allowedTypeScriptDirectory(directory) {
 
 const languageServiceHost = {
   getCompilationSettings: () => compilerOptions,
-  getScriptFileNames: () =>
-    [...statesByUri.values()]
-      .filter((state) => state.embedded.ranges.length > 0)
-      .map((state) => state.fileName),
-  getScriptVersion: (fileName) => String(statesByFileName.get(fileName)?.scriptVersion ?? 0),
+  getScriptFileNames: () => [...activeJavaScriptStates].map((state) => state.fileName),
+  getScriptVersion: (fileName) =>
+    String(
+      statesByFileName.get(fileName)?.scriptVersion ??
+        importedSnapshotVersions.get(fileName) ??
+        0,
+    ),
   getProjectVersion: () => String(projectVersion),
   getScriptSnapshot: (fileName) => {
     const state = statesByFileName.get(fileName);
@@ -542,15 +565,26 @@ const languageServiceHost = {
         return undefined;
       }
       importedSnapshotFiles.add(fileName);
+      if (!importedSnapshotVersions.has(fileName)) importedSnapshotVersions.set(fileName, 0);
     }
     snapshot = ts.ScriptSnapshot.fromString(contents);
     librarySnapshots.set(fileName, snapshot);
     return snapshot;
   },
   getScriptKind: (fileName) =>
-    statesByFileName.has(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.Unknown,
+    statesByFileName.has(fileName) ? ts.ScriptKind.JS : ts.getScriptKindFromFileName(fileName),
   getCurrentDirectory: () => process.cwd(),
   getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+  resolveModuleNames: (moduleNames, containingFile) =>
+    moduleNames.map((moduleName) => {
+      const resolvedModule = ts.resolveModuleName(
+        moduleName,
+        containingFile,
+        compilerOptions,
+        languageServiceHost,
+      ).resolvedModule;
+      return resolvedModule;
+    }),
   fileExists: (fileName) => allowedTypeScriptPath(fileName) && ts.sys.fileExists(fileName),
   readFile: (fileName) =>
     allowedTypeScriptPath(fileName) ? ts.sys.readFile(fileName) : undefined,
@@ -570,7 +604,7 @@ const languageServiceHost = {
 // Load TypeScript lazily so themes without open JavaScript blocks pay almost no
 // memory or startup cost for this optional server.
 function hasEmbeddedJavaScriptDocuments() {
-  return [...statesByUri.values()].some((state) => state.embedded.ranges.length > 0);
+  return activeJavaScriptStates.size > 0;
 }
 
 function cancelLanguageServiceDisposal() {
@@ -585,6 +619,7 @@ function disposeLanguageService() {
   compilerOptions = undefined;
   librarySnapshots.clear();
   importedSnapshotFiles.clear();
+  importedSnapshotVersions.clear();
   languageServiceIdleTimer = undefined;
   if (performanceLogging) connection.console.info('TypeScript language service disposed');
 }
@@ -922,12 +957,16 @@ connection.onInitialized(() => {
           { globPattern: '**/config/**' },
           { globPattern: '**/layout/**' },
           { globPattern: '**/templates/**' },
+          { globPattern: '**/*.{js,jsx,ts,tsx,mjs,cjs}' },
         ],
       })
       .catch((error) => connection.console.warn(`Unable to watch theme roots: ${error}`));
   }
 });
-connection.onDidChangeWatchedFiles(() => clearThemeRootCaches());
+connection.onDidChangeWatchedFiles((params) => {
+  clearThemeRootCaches();
+  invalidateImportedSnapshots(params.changes);
+});
 
 connection.onCompletion(async (params, cancellationToken) => {
   const uri = params.textDocument.uri;
@@ -1091,7 +1130,10 @@ documents.onDidClose(({ document }) => {
   const state = statesByUri.get(document.uri);
   if (state) {
     statesByFileName.delete(state.fileName);
-    if (state.embedded.ranges.length > 0) projectVersion += 1;
+    if (state.embedded.ranges.length > 0) {
+      activeJavaScriptStates.delete(state);
+      projectVersion += 1;
+    }
   }
   statesByUri.delete(document.uri);
   scheduleLanguageServiceDisposal();
@@ -1104,6 +1146,7 @@ connection.onShutdown(() => {
   languageService?.dispose();
   librarySnapshots.clear();
   importedSnapshotFiles.clear();
+  importedSnapshotVersions.clear();
 });
 
 documents.listen(connection);
