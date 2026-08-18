@@ -276,7 +276,7 @@ async function definitionForReference(state, offset) {
   const reference = state.definitionReferences.find(
     (candidate) => offset >= candidate.start && offset <= candidate.end,
   );
-  if (!reference || path.basename(reference.name) !== reference.name) return null;
+  if (!reference) return null;
 
   let root;
   try {
@@ -286,7 +286,12 @@ async function definitionForReference(state, offset) {
   }
   if (!root) return null;
 
-  const candidate = path.join(root, reference.category, `${reference.name}.liquid`);
+  // Shopify permits nested snippet paths. Resolve references against their
+  // category directory instead of rejecting every name containing a slash,
+  // while still preventing traversal outside the theme root.
+  const categoryRoot = path.resolve(root, reference.category);
+  const candidate = path.resolve(categoryRoot, `${reference.name}.liquid`);
+  if (!isWithinDirectory(categoryRoot, candidate)) return null;
   try {
     if (!(await fs.stat(candidate)).isFile()) return null;
   } catch (_error) {

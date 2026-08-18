@@ -99,18 +99,38 @@ jobs:
         run: |
           export SHOPIFY_VERSION="$(node -p 'require("./package.json").devDependencies["@shopify/theme-language-server-node"]')"
           export TYPESCRIPT_VERSION="$(node -p 'require("./package.json").devDependencies.typescript')"
+          export PROJECT_PACKAGE_JSON="$GITHUB_WORKSPACE/package.json"
           mkdir -p "$RUNTIME_DIRECTORY"
           cd "$RUNTIME_DIRECTORY"
           npm init --yes
+          mapfile -t SUPPORT_PACKAGES < <(
+            node -e 'const p=require(process.env.PROJECT_PACKAGE_JSON).devDependencies; for (const name of ["@shopify/liquid-html-parser","@shopify/theme-check-docs-updater","@shopify/theme-language-server-common","vscode-css-languageservice","vscode-languageserver","vscode-languageserver-textdocument"]) console.log(`${name}@${p[name]}`)'
+          )
           npm install \
             --ignore-scripts \
             "@shopify/theme-language-server-node@$SHOPIFY_VERSION" \
-            "typescript@$TYPESCRIPT_VERSION"
+            "typescript@$TYPESCRIPT_VERSION" \
+            "${SUPPORT_PACKAGES[@]}"
           NODE_PATH="$RUNTIME_DIRECTORY/node_modules" node - <<'NODE'
           const assert = require('node:assert/strict');
-          assert.equal(require('@shopify/theme-language-server-node/package.json').version, process.env.SHOPIFY_VERSION);
-          assert.equal(require('typescript/package.json').version, process.env.TYPESCRIPT_VERSION);
+          const project = require(process.env.PROJECT_PACKAGE_JSON);
+          const packageVersions = {
+            '@shopify/theme-language-server-node': process.env.SHOPIFY_VERSION,
+            typescript: process.env.TYPESCRIPT_VERSION,
+            '@shopify/liquid-html-parser': project.devDependencies['@shopify/liquid-html-parser'],
+            '@shopify/theme-check-docs-updater': project.devDependencies['@shopify/theme-check-docs-updater'],
+            '@shopify/theme-language-server-common': project.devDependencies['@shopify/theme-language-server-common'],
+            'vscode-css-languageservice': project.devDependencies['vscode-css-languageservice'],
+            'vscode-languageserver': project.devDependencies['vscode-languageserver'],
+            'vscode-languageserver-textdocument': project.devDependencies['vscode-languageserver-textdocument'],
+          };
+          for (const [name, version] of Object.entries(packageVersions)) {
+            assert.equal(require(`${name}/package.json`).version, version);
+          }
           assert.equal(typeof require('@shopify/theme-language-server-node').startServer, 'function');
           assert.equal(typeof require('typescript').createLanguageService, 'function');
+          assert.equal(typeof require('@shopify/liquid-html-parser').toTolerantLiquidHtmlAST, 'function');
+          assert.equal(typeof require('@shopify/theme-language-server-common/dist/utils/liquidDoc'), 'object');
+          assert.equal(typeof require('vscode-css-languageservice').getCSSLanguageService, 'function');
           NODE
           npm audit

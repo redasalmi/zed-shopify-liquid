@@ -39,8 +39,15 @@ assert.equal(
 for (const [packageName, constantName] of [
   ['@shopify/theme-language-server-node', 'PACKAGE_VERSION'],
   ['typescript', 'TYPESCRIPT_PACKAGE_VERSION'],
+  ['@shopify/liquid-html-parser', 'LIQUID_HTML_PARSER_VERSION'],
+  ['@shopify/theme-check-docs-updater', 'THEME_CHECK_DOCS_UPDATER_VERSION'],
+  ['@shopify/theme-language-server-common', 'THEME_LANGUAGE_SERVER_COMMON_VERSION'],
+  ['vscode-css-languageservice', 'VSCODE_CSS_LANGUAGE_SERVICE_VERSION'],
+  ['vscode-languageserver', 'VSCODE_LANGUAGE_SERVER_VERSION'],
+  ['vscode-languageserver-textdocument', 'VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION'],
 ]) {
   const expected = packageJson.devDependencies[packageName];
+  assert(expected, `${packageName} must be listed in devDependencies`);
   const match = new RegExp(`const ${constantName}: &str = "([^"]+)";`).exec(rustSource);
   assert(match, `missing Rust ${constantName}`);
   assert.equal(match[1], expected, `${packageName} must match its Rust runtime pin`);

@@ -5,6 +5,7 @@ use zed_extension_api::{self as zed, serde_json, Result};
 struct LiquidExtension {
     did_find_server: bool,
     did_find_typescript: bool,
+    did_find_support_packages: bool,
 }
 
 // Use the same language server package as Shopify's VS Code extension. Running
@@ -22,6 +23,35 @@ const TYPESCRIPT_SERVER_PATH: &str = "node_modules/typescript/lib/typescript.js"
 // TypeScript 7 currently exposes only its native CLI from CommonJS; the
 // embedded language server requires the stable JavaScript language-service API.
 const TYPESCRIPT_PACKAGE_VERSION: &str = "5.9.3";
+// These packages are imported directly by the supplemental server. They are
+// also transitive dependencies of Shopify's server today, but relying on that
+// implementation detail would make an upstream update fail at runtime.
+const LIQUID_HTML_PARSER_VERSION: &str = "2.10.0";
+const THEME_CHECK_DOCS_UPDATER_VERSION: &str = "3.28.1";
+const THEME_LANGUAGE_SERVER_COMMON_VERSION: &str = "2.22.1";
+const VSCODE_CSS_LANGUAGE_SERVICE_VERSION: &str = "6.3.2";
+const VSCODE_LANGUAGE_SERVER_VERSION: &str = "8.1.0";
+const VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION: &str = "1.0.12";
+const SUPPORT_PACKAGES: &[(&str, &str)] = &[
+    ("@shopify/liquid-html-parser", LIQUID_HTML_PARSER_VERSION),
+    (
+        "@shopify/theme-check-docs-updater",
+        THEME_CHECK_DOCS_UPDATER_VERSION,
+    ),
+    (
+        "@shopify/theme-language-server-common",
+        THEME_LANGUAGE_SERVER_COMMON_VERSION,
+    ),
+    (
+        "vscode-css-languageservice",
+        VSCODE_CSS_LANGUAGE_SERVICE_VERSION,
+    ),
+    ("vscode-languageserver", VSCODE_LANGUAGE_SERVER_VERSION),
+    (
+        "vscode-languageserver-textdocument",
+        VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION,
+    ),
+];
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
 const EMBEDDED_SUPPORT_FILES: &[(&str, &str)] = &[
     (
@@ -138,9 +168,37 @@ impl LiquidExtension {
         language_server_id: &zed::LanguageServerId,
     ) -> Result<String> {
         let result = (|| {
-            // This also ensures the vscode-languageserver dependency supplied by
-            // Shopify's server package is available to the embedded server.
             self.server_script_path(language_server_id)?;
+
+            if !self.did_find_support_packages {
+                for (package_name, package_version) in SUPPORT_PACKAGES {
+                    let installed_version = zed::npm_package_installed_version(package_name)?;
+                    if installed_version.as_deref() != Some(*package_version) {
+                        zed::set_language_server_installation_status(
+                            language_server_id,
+                            &zed::LanguageServerInstallationStatus::Downloading,
+                        );
+
+                        if let Err(error) = zed::npm_install_package(package_name, package_version)
+                        {
+                            // Keep an older usable package when an update fails
+                            // while offline. The installed server remains usable
+                            // as long as the package was present before the
+                            // attempted update.
+                            if installed_version.is_none() {
+                                return Err(error);
+                            }
+                        }
+                    }
+
+                    if zed::npm_package_installed_version(package_name)?.is_none() {
+                        return Err(format!(
+                            "installed package '{package_name}' is unavailable after installation",
+                        ));
+                    }
+                }
+                self.did_find_support_packages = true;
+            }
 
             if !(self.did_find_typescript && self.typescript_exists()) {
                 let installed_version =
@@ -212,6 +270,7 @@ impl zed::Extension for LiquidExtension {
         Self {
             did_find_server: false,
             did_find_typescript: false,
+            did_find_support_packages: false,
         }
     }
 
@@ -342,6 +401,12 @@ mod tests {
             package["devDependencies"][TYPESCRIPT_PACKAGE_NAME],
             TYPESCRIPT_PACKAGE_VERSION
         );
+        for (package_name, package_version) in SUPPORT_PACKAGES {
+            assert_eq!(
+                package["devDependencies"][*package_name], *package_version,
+                "support package pin must match the embedded server runtime",
+            );
+        }
     }
 
     #[test]

@@ -500,6 +500,8 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
 {% endjavascript %}
 `;
   const navigationSource = `{% render 'card' %}
+{% render 'cards/product' %}
+{% render '../escape' %}
 {% section 'footer' %}
 {% content_for 'block', type: 'feature' %}
 `;
@@ -510,6 +512,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     'sections/assets.liquid': assetSource,
     'sections/navigation.liquid': navigationSource,
     'snippets/card.liquid': 'root card',
+    'snippets/cards/product.liquid': 'nested product card',
     'sections/footer.liquid': 'footer',
     'blocks/feature.liquid': 'feature',
     'nested/.theme-check.yml': 'root: .\n',
@@ -657,6 +660,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     const navigationUri = client.open(theme.file('sections/navigation.liquid'), navigationSource);
     for (const [reference, target] of [
       ["'card'", 'snippets/card.liquid'],
+      ["'cards/product'", 'snippets/cards/product.liquid'],
       ["'footer'", 'sections/footer.liquid'],
       ["'feature'", 'blocks/feature.liquid'],
     ]) {
@@ -666,6 +670,12 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       });
       assert.equal(locationUri(definition), pathToFileURL(theme.file(target)).href);
     }
+
+    const unsafeDefinition = await client.request('textDocument/definition', {
+      textDocument: { uri: navigationUri },
+      position: positionAt(navigationSource, navigationSource.indexOf("'../escape'") + 2),
+    });
+    assert.equal(unsafeDefinition, null, 'static references must stay inside their category');
 
     const nestedUri = client.open(
       theme.file('nested/sections/navigation.liquid'),
