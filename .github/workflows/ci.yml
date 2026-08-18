@@ -113,6 +113,8 @@ jobs:
             "${SUPPORT_PACKAGES[@]}"
           NODE_PATH="$RUNTIME_DIRECTORY/node_modules" node - <<'NODE'
           const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
           const project = require(process.env.PROJECT_PACKAGE_JSON);
           const packageVersions = {
             '@shopify/theme-language-server-node': process.env.SHOPIFY_VERSION,
@@ -124,8 +126,20 @@ jobs:
             'vscode-languageserver': project.devDependencies['vscode-languageserver'],
             'vscode-languageserver-textdocument': project.devDependencies['vscode-languageserver-textdocument'],
           };
+          function installedVersion(name) {
+            let directory = path.dirname(require.resolve(name));
+            while (directory !== path.dirname(directory)) {
+              const packagePath = path.join(directory, 'package.json');
+              if (fs.existsSync(packagePath)) {
+                const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+                if (packageJson.name === name) return packageJson.version;
+              }
+              directory = path.dirname(directory);
+            }
+            throw new Error(`unable to locate package metadata for ${name}`);
+          }
           for (const [name, version] of Object.entries(packageVersions)) {
-            assert.equal(require(`${name}/package.json`).version, version);
+            assert.equal(installedVersion(name), version);
           }
           assert.equal(typeof require('@shopify/theme-language-server-node').startServer, 'function');
           assert.equal(typeof require('typescript').createLanguageService, 'function');
