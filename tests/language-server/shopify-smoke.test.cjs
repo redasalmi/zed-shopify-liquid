@@ -18,10 +18,12 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
 `;
   const autocloseSource = '<main>';
   const jsonSource = '[{"name":"x","settings":[{"type":""}]}]';
+  const unrelatedJsonSource = '{"name":"demo","type":""}';
   const theme = await createTheme({
     'sections/features.liquid': featureSource,
     'sections/autoclose.liquid': autocloseSource,
     'config/settings_schema.json': jsonSource,
+    'package.json': unrelatedJsonSource,
     'snippets/card.liquid': '<div>Card</div>',
   });
   const client = shopifyClient(theme.root);
@@ -50,6 +52,10 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
     const capabilities = initialize.capabilities;
     assert(capabilities.completionProvider);
     assert(capabilities.hoverProvider);
+    assert(capabilities.codeActionProvider);
+    assert(capabilities.documentHighlightProvider);
+    assert(capabilities.renameProvider);
+    assert(capabilities.executeCommandProvider);
     assert.equal(capabilities.documentLinkProvider.resolveProvider, false);
     assert.equal(capabilities.linkedEditingRangeProvider, true);
     assert(capabilities.documentOnTypeFormattingProvider.moreTriggerCharacter.includes('>'));
@@ -88,6 +94,18 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
     assert.deepEqual(linked.ranges[0].start, positionAt(featureSource, featureSource.indexOf('article')));
     assert.deepEqual(linked.ranges[1].start, positionAt(featureSource, featureSource.lastIndexOf('article')));
 
+    const highlights = await client.request('textDocument/documentHighlight', {
+      textDocument: { uri: featureUri },
+      position: positionAt(featureSource, featureSource.indexOf('article') + 2),
+    });
+    assert.equal(highlights.length, 2);
+
+    const renamePreparation = await client.request('textDocument/prepareRename', {
+      textDocument: { uri: featureUri },
+      position: positionAt(featureSource, featureSource.indexOf('article') + 2),
+    });
+    assert.equal(renamePreparation.placeholder, 'article');
+
     const autocloseUri = client.open(theme.file('sections/autoclose.liquid'), autocloseSource);
     const autoclose = await client.request('textDocument/onTypeFormatting', {
       textDocument: { uri: autocloseUri },
@@ -119,6 +137,23 @@ test('pinned Shopify language server integration smoke test', { timeout: 90_000 
     assert(
       completionItems(jsonCompletions).some((item) => item.label === '"header"'),
       'Shopify JSON schema completion should reach the client',
+    );
+
+    const unrelatedJsonUri = client.open(
+      theme.file('package.json'),
+      unrelatedJsonSource,
+      1,
+      'json',
+    );
+    const unrelatedJsonCompletions = await client.request('textDocument/completion', {
+      textDocument: { uri: unrelatedJsonUri },
+      position: positionAt(unrelatedJsonSource, unrelatedJsonSource.indexOf('""', unrelatedJsonSource.indexOf('type')) + 1),
+      context: { triggerKind: 1 },
+    });
+    assert.deepEqual(
+      completionItems(unrelatedJsonCompletions),
+      [],
+      'Shopify JSON providers must stay quiet outside theme JSON files',
     );
 
     const diagnostics = await client.waitForNotification(

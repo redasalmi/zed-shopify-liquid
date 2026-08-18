@@ -152,6 +152,16 @@ theme architecture. Platform-controlled settings remain Shopify-owned theme
 JSON data; the extension delegates their JSON semantics to Shopify's server and
 does not maintain a parallel implementation.
 
+### Differences from Shopify's VS Code extension
+
+The extension reuses Shopify's language server, but Zed does not currently have
+equivalents for the VS Code Theme Graph views, dead-code command, browser/VFS
+filesystem adapter, or bundled Prettier provider. Full-document formatting uses
+Zed's Prettier integration, so themes should install
+`@shopify/prettier-plugin-liquid` and configure it as shown above. Shopify JSON
+providers remain quiet for unrelated JSON files even though Zed's manifest
+associates the server with the general `JSON` language.
+
 ## Development
 
 Using Node.js 22 or newer and npm 11.17.0, install the test

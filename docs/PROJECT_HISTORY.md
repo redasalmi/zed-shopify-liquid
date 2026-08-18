@@ -365,6 +365,22 @@ pins from the checked-in manifests. CI derives fresh-install versions from those
 pins, validates release tag/version agreement, retains both WASI artifacts for
 tag builds, and receives scheduled dependency update proposals.
 
+### Embedded runtime and navigation hardening
+
+The supplemental server now declares and installs the Shopify parser, LiquidDoc,
+CSS, and LSP packages it imports directly instead of depending only on
+Shopify's current transitive dependency layout. Fresh-install CI verifies their
+versions and the private compatibility imports used by the Zed adapter.
+
+Static definition navigation now supports nested snippet paths while resolving
+through a category-root boundary, preserving traversal protection. Protocol
+coverage includes nested references, traversal rejection, unrelated JSON
+provider behavior, and the official server's navigation capabilities.
+
+The remaining host differences from Shopify's VS Code extension are documented
+in the README: Zed has no equivalent Theme Graph UI or browser/VFS adapter, and
+full-document Liquid formatting remains owned by Zed's Prettier integration.
+
 ## Current architecture
 
 ### Extension host
