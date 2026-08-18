@@ -132,5 +132,10 @@ jobs:
           assert.equal(typeof require('@shopify/liquid-html-parser').toTolerantLiquidHtmlAST, 'function');
           assert.equal(typeof require('@shopify/theme-language-server-common/dist/utils/liquidDoc'), 'object');
           assert.equal(typeof require('vscode-css-languageservice').getCSSLanguageService, 'function');
+          assert.equal(typeof require('vscode-languageserver/node').createConnection, 'function');
+          assert.equal(
+            typeof require('vscode-languageserver-textdocument').TextDocument.create,
+            'function',
+          );
           NODE
           npm audit
