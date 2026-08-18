@@ -36,15 +36,21 @@ repository.
 2. Confirm both **Shopify Theme Language Server** and **Liquid Embedded
    Support** start without installation status remaining visible.
 3. Open the fixtures under `tests/language-server` in a temporary theme and
-   verify Liquid and theme JSON completion.
+   verify Liquid and theme JSON completion. Confirm an unrelated `package.json`
+   does not show Shopify JSON completions.
 4. In a file under `sections/`, verify JavaScript completion, hover,
    diagnostics, definition, and range formatting inside `{% javascript %}`.
+   Verify `render 'cards/product'` navigates to nested snippets and traversal
+   references do not leave the theme root.
 5. Verify CSS custom-property definition and range formatting inside
    `{% stylesheet %}`.
 6. Verify no embedded results appear at either closing tag or in an unrelated
    directory merely named `sections`.
-7. Disable networking, restart both servers, and confirm an existing usable
-   installation is retained.
+7. Configure `@shopify/prettier-plugin-liquid` in the theme, format a complete
+   Liquid document through Zed's Prettier integration, and verify embedded
+   stylesheet and JavaScript range formatting remains available.
+8. Disable networking, restart both servers, and confirm existing usable
+   installations are retained.
 
 ## Version and artifact checks
 

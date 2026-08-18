@@ -66,7 +66,11 @@ to retain Shopify's theme JSON completion and navigation.
 
 The embedded JavaScript server loads TypeScript only when a JavaScript block is
 open and releases its analysis state 30 seconds after the final JavaScript
-document becomes inactive. To protect the editor process, documents over 2 MiB
+document becomes inactive. TypeScript semantics and the extension's
+supplemental CSS navigation/formatting are limited to Shopify-supported
+`sections/`, `blocks/`, and `snippets/` files. Shopify's own stylesheet provider
+may still provide CSS completion, hover, and diagnostics in other Liquid files.
+To protect the editor process, documents over 2 MiB
 or embedded blocks over 512 KiB receive an informational diagnostic instead of
 loading embedded semantics. For very large themes, setting
 `themeCheck.preloadOnBoot` to `false`
