@@ -55,6 +55,10 @@ const SUPPORT_PACKAGES: &[(&str, &str)] = &[
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
 const EMBEDDED_SUPPORT_FILES: &[(&str, &str)] = &[
     (
+        "liquid-doc-tools.cjs",
+        include_str!("../language-server/liquid-doc-tools.cjs"),
+    ),
+    (
         "embedded-language.cjs",
         include_str!("../language-server/embedded-language.cjs"),
     ),
@@ -427,10 +431,17 @@ mod tests {
             .iter()
             .find_map(|(path, source)| (*path == "theme-roots.cjs").then_some(*source))
             .unwrap();
+        let liquid_doc_tools = EMBEDDED_SUPPORT_FILES
+            .iter()
+            .find_map(|(path, source)| (*path == "liquid-doc-tools.cjs").then_some(*source))
+            .unwrap();
 
         assert!(EMBEDDED_SERVER.contains("require('./embedded-language.cjs')"));
         assert!(EMBEDDED_SERVER.contains("require('./liquid-document-analysis.cjs')"));
         assert!(EMBEDDED_SERVER.contains("require('./theme-roots.cjs')"));
+        assert!(EMBEDDED_SERVER.contains("require('./liquid-doc-tools.cjs')"));
+        assert!(liquid_doc_tools.contains("theme-language-server-common/dist/utils/liquidDoc"));
+        assert!(liquid_doc_tools.contains("SUPPORTED_LIQUID_DOC_TAG_HANDLES"));
         assert!(embedded_language.contains("embeddedLanguage(source, 'javascript'"));
         assert!(embedded_language.contains("embeddedLanguage(source, 'stylesheet'"));
         assert!(embedded_language.contains("slice(0, 1)"));
@@ -447,9 +458,7 @@ mod tests {
         assert!(EMBEDDED_SERVER.contains("liquidDocTypeCompletions"));
         assert!(EMBEDDED_SERVER.contains("liquidDocTagCompletions"));
         assert!(EMBEDDED_SERVER.contains("@shopify/theme-check-docs-updater"));
-        assert!(
-            EMBEDDED_SERVER.contains("@shopify/theme-language-server-common/dist/utils/liquidDoc")
-        );
+        assert!(EMBEDDED_SERVER.contains("liquidDocTools()"));
         assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
         assert!(EMBEDDED_SERVER.contains("`${name}[]`"));
         assert!(EMBEDDED_SERVER.contains("textEdit"));

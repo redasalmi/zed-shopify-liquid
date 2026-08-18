@@ -394,7 +394,8 @@ JavaScript states are tracked directly for TypeScript project enumeration.
 Workspace JavaScript/TypeScript snapshots now carry versions and are
 invalidated when watched files change. Theme-root caches use bounded LRU-style
 eviction. The regression suite covers imported-module refresh and
-change-aware embedded-range reuse.
+change-aware embedded-range reuse. The Shopify LiquidDoc private import is
+isolated in a compatibility module with an explicit API-shape failure.
 
 ## Current architecture
 

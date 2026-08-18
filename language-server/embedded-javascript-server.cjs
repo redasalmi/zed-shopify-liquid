@@ -24,6 +24,7 @@ const {
   intersectingRanges,
   sameEmbeddedLanguage,
 } = require('./embedded-language.cjs');
+const { liquidDocTools } = require('./liquid-doc-tools.cjs');
 const {
   analyzeLiquidDocument,
   parseSchema,
@@ -102,7 +103,6 @@ let documentRegistry;
 let languageService;
 let languageServiceIdleTimer;
 let liquidDocParamTypesPromise;
-let liquidDocLanguageTools;
 let liquidDocTagCompletionItems;
 let shuttingDown = false;
 let supportsWatchedFileRegistration = false;
@@ -195,13 +195,8 @@ function liquidDocTagCompletions(state, offset, context) {
   if (!/^\s*@$/.test(source.slice(lineStart, offset))) return null;
 
   if (!liquidDocTagCompletionItems) {
-    if (!liquidDocLanguageTools) {
-      liquidDocLanguageTools = require(
-        '@shopify/theme-language-server-common/dist/utils/liquidDoc',
-      );
-    }
     const { formatLiquidDocTagHandle, SUPPORTED_LIQUID_DOC_TAG_HANDLES } =
-      liquidDocLanguageTools;
+      liquidDocTools();
     liquidDocTagCompletionItems = Object.entries(SUPPORTED_LIQUID_DOC_TAG_HANDLES).map(
       ([label, { description, example, template }]) => ({
         label,

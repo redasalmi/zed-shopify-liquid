@@ -56,6 +56,7 @@ for (const [packageName, constantName] of [
 for (const supportFile of [
   'embedded-language.cjs',
   'liquid-document-analysis.cjs',
+  'liquid-doc-tools.cjs',
   'theme-roots.cjs',
 ]) {
   assert(rustSource.includes(`"${supportFile}"`), `${supportFile} must be written by the extension`);
