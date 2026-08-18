@@ -290,7 +290,9 @@ async function definitionForReference(state, offset) {
   // category directory instead of rejecting every name containing a slash,
   // while still preventing traversal outside the theme root.
   const categoryRoot = path.resolve(root, reference.category);
-  const candidate = path.resolve(categoryRoot, `${reference.name}.liquid`);
+  const targetName =
+    reference.category === 'assets' ? reference.name : `${reference.name}.liquid`;
+  const candidate = path.resolve(categoryRoot, targetName);
   if (!isWithinDirectory(categoryRoot, candidate)) return null;
   try {
     if (!(await fs.stat(candidate)).isFile()) return null;

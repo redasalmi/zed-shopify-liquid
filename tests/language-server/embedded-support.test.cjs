@@ -503,6 +503,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
 {% render 'cards/product' %}
 {% render '../escape' %}
 {% section 'footer' %}
+{{ 'theme.js' | asset_url }}
 {% content_for 'block', type: 'feature' %}
 `;
   const nestedNavigationSource = `{% render 'card' %}`;
@@ -513,6 +514,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     'sections/navigation.liquid': navigationSource,
     'snippets/card.liquid': 'root card',
     'snippets/cards/product.liquid': 'nested product card',
+    'assets/theme.js': 'asset',
     'sections/footer.liquid': 'footer',
     'blocks/feature.liquid': 'feature',
     'nested/.theme-check.yml': 'root: .\n',
@@ -662,6 +664,7 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       ["'card'", 'snippets/card.liquid'],
       ["'cards/product'", 'snippets/cards/product.liquid'],
       ["'footer'", 'sections/footer.liquid'],
+      ["'theme.js'", 'assets/theme.js'],
       ["'feature'", 'blocks/feature.liquid'],
     ]) {
       const definition = await client.request('textDocument/definition', {

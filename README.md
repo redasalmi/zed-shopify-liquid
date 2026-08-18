@@ -26,7 +26,7 @@ object type inside paired `{}` braces. Typing `@` in LiquidDoc opens Shopify's
 `@param`,
 `@description`, and `@example` snippets, while system-authored `@prompt` blocks
 receive dedicated highlighting. Go-to-definition and document links navigate
-static `render`, `include`, `section`, and `content_for 'block'` file references.
+static `render`, `include`, `section`, `content_for 'block'`, and `asset_url` file references.
 HTML opening tags autoclose, and renaming an opening or closing tag updates its
 linked counterpart through Shopify's language server.
 
@@ -130,7 +130,7 @@ responsive editing over legacy compound asset modes.
 - [x] Modern `{% schema %}` completion and validation for `@theme`, `@app`,
       targeted blocks, nested blocks, and presets through Shopify's server
 - [x] Go-to-definition and document links for snippets, sections, blocks,
-      `render`, `include`, `section`, and static `content_for` references
+      `render`, `include`, `section`, static `content_for`, and `asset_url` references
 - [x] LiquidDoc tag and type completion, `@prompt` highlighting, hover, and
       render/block parameter semantics
 - [x] HTML tag autoclosing and linked opening/closing tag editing through

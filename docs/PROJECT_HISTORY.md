@@ -228,8 +228,9 @@ exposing it as a public completion tag.
 Shopify's language server remains the owner of document links for static
 `render`, `include`, `section`, asset, schema block, and `content_for 'block'`
 references. Its definition provider only resolves translation keys, however, so
-the embedded support server fills that confirmed gap for snippet, section, and
-static block file references. It uses Shopify's tolerant Liquid parser lazily,
+the embedded support server fills that confirmed gap for snippet, section,
+static block, and asset file references. Nested paths are resolved safely within
+their theme category directories. It uses Shopify's tolerant Liquid parser lazily,
 returns definitions only for files that exist, supports references inside
 `{% liquid %}`, honors the `root` value in the nearest `.theme-check.yml`, and
 otherwise infers the nearest root from standard theme directories so nested
@@ -372,10 +373,11 @@ CSS, and LSP packages it imports directly instead of depending only on
 Shopify's current transitive dependency layout. Fresh-install CI verifies their
 versions and the private compatibility imports used by the Zed adapter.
 
-Static definition navigation now supports nested snippet paths while resolving
-through a category-root boundary, preserving traversal protection. Protocol
-coverage includes nested references, traversal rejection, unrelated JSON
-provider behavior, and the official server's navigation capabilities.
+Static definition navigation now supports nested snippet and asset paths while
+resolving through category-root boundaries, preserving traversal protection.
+Protocol coverage includes nested references, asset references, traversal
+rejection, unrelated JSON provider behavior, and the official server's
+navigation capabilities.
 
 The remaining host differences from Shopify's VS Code extension are documented
 in the README: Zed has no equivalent Theme Graph UI or browser/VFS adapter, and

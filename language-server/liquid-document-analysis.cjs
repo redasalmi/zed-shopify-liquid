@@ -77,6 +77,23 @@ function referencesInSource(source) {
     const ast = toTolerantLiquidHtmlAST(source);
 
     walk(ast, (node) => {
+      if (node.type === NodeTypes.LiquidVariableOutput) {
+        const markup = node.markup;
+        if (
+          markup &&
+          typeof markup !== 'string' &&
+          markup.expression?.type === NodeTypes.String &&
+          markup.filters?.[0]?.name === 'asset_url'
+        ) {
+          references.push({
+            category: 'assets',
+            name: markup.expression.value,
+            start: markup.expression.position.start,
+            end: markup.expression.position.end,
+          });
+        }
+        return;
+      }
       if (node.type !== NodeTypes.LiquidTag || typeof node.markup === 'string') return;
 
       let category;
