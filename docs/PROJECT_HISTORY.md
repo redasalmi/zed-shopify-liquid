@@ -95,6 +95,16 @@ completion query character and filtered labels such as `title` against the full
 text `product.`. Removing `.` restored object-property completion while keeping
 hyphenated Liquid queries usable.
 
+### Liquid snippets — `0.26.0`
+
+The Shopify language server only starts tag completion after a Liquid delimiter
+such as `{% `; it does not turn a plain `if` prefix into a complete block.
+The extension now registers `snippets/liquid.json` in its manifest, restoring
+plain-prefix completion and expansion for `if`, `for`, `unless`, `case`, and
+other common Liquid, Shopify theme, schema, and embedded-asset patterns. The
+snippet contract tests keep the manifest registration, metadata, tab stops, and
+matching block terminators covered.
+
 ### Embedded assets — `d30e560`
 
 - Retained Shopify's CSS completion, hover, and diagnostics inside bundled
@@ -372,7 +382,7 @@ work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.25.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `0.26.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

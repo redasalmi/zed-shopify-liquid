@@ -7,8 +7,10 @@ same core package as [Shopify's VS Code extension](https://github.com/Shopify/th
 
 The extension also provides Liquid-aware indentation, code folding, document
 outlines, bracket matching, embedded HTML, CSS, JavaScript, and JSON
-highlighting, and modern Theme Blocks syntax such as `content_for`. Bundled
-`{% stylesheet %}` blocks support CSS completion, hover, diagnostics, local
+highlighting, modern Theme Blocks syntax such as `content_for`, and a catalog
+of Liquid and Shopify snippets. Typing `if`, `for`, `unless`, `case`, `render`,
+or other common prefixes offers ready-to-expand code blocks with tab stops.
+Bundled `{% stylesheet %}` blocks support CSS completion, hover, diagnostics, local
 custom-property navigation, and selection formatting. Bundled
 `{% javascript %}` blocks support JavaScript completion, hover,
 TypeScript-powered diagnostics, local symbol navigation, and selection

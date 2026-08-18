@@ -7,7 +7,8 @@
   },
   "scripts": {
     "check:repository": "node scripts/check-repository-contracts.cjs",
-    "test": "npm run check:repository && npm run test:lsp && npm run test:queries",
+    "test": "npm run check:repository && npm run test:snippets && npm run test:lsp && npm run test:queries",
+    "test:snippets": "node --test tests/snippets.test.cjs",
     "test:lsp": "node --test --test-concurrency=1 tests/language-server/*.test.cjs",
     "test:queries": "node --test tests/queries/*.test.cjs",
     "test:stress": "node --test tests/language-server/embedded-stress.test.cjs"

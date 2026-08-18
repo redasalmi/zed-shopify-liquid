@@ -1,10 +1,11 @@
 id = "liquid"
 name = "Liquid"
-version = "0.25.0"
+version = "0.26.0"
 schema_version = 1
 authors = ["Jeffrey Guenther <guenther.jeffrey@gmail.com>"]
 description = "Shopify Liquid support"
 repository = "https://github.com/redasalmi/zed-shopify-liquid"
+snippets = ["./snippets/liquid.json"]
 
 [grammars.liquid]
 repository = "https://github.com/redasalmi/tree-sitter-liquid"
