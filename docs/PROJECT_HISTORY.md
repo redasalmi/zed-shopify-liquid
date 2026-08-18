@@ -414,7 +414,7 @@ work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `0.26.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `1.0.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 
