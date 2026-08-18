@@ -475,6 +475,8 @@ mod tests {
     #[test]
     fn official_server_is_attached_to_theme_json() {
         assert!(EXTENSION_MANIFEST.contains("languages = [\"Liquid\", \"JSON\"]"));
+        assert!(EXTENSION_MANIFEST.contains("Liquid = \"liquid\""));
+        assert!(EXTENSION_MANIFEST.contains("JSON = \"json\""));
     }
 
     #[test]

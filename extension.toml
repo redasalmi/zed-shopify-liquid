@@ -15,6 +15,13 @@ commit = "0e228e6d080f1fc7b0e6a661479004c16c8d2514"
 name = "Shopify Theme Language Server"
 languages = ["Liquid", "JSON"]
 
+[language_servers.liquid.language_ids]
+Liquid = "liquid"
+JSON = "json"
+
 [language_servers.liquid-embedded-javascript]
 name = "Liquid Embedded Support"
 languages = ["Liquid"]
+
+[language_servers.liquid-embedded-javascript.language_ids]
+Liquid = "liquid"
