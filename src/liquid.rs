@@ -113,6 +113,40 @@ impl LiquidExtension {
         }
     }
 
+    fn ensure_npm_package<F>(
+        &self,
+        language_server_id: &zed::LanguageServerId,
+        package_name: &str,
+        package_version: &str,
+        is_usable: F,
+    ) -> Result<()>
+    where
+        F: Fn() -> bool,
+    {
+        let installed_version = zed::npm_package_installed_version(package_name)?;
+        if installed_version.as_deref() != Some(package_version) {
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::Downloading,
+            );
+
+            if let Err(error) = zed::npm_install_package(package_name, package_version) {
+                // Keep an older usable package when an update fails while
+                // offline instead of disabling Liquid support.
+                if !is_usable() {
+                    return Err(error);
+                }
+            }
+        }
+
+        if !is_usable() {
+            return Err(format!(
+                "installed package '{package_name}' is unavailable after installation",
+            ));
+        }
+        Ok(())
+    }
+
     fn server_script_path(&mut self, language_server_id: &zed::LanguageServerId) -> Result<String> {
         let result = (|| {
             if !(self.did_find_server && self.server_exists()) {
@@ -120,23 +154,9 @@ impl LiquidExtension {
                     language_server_id,
                     &zed::LanguageServerInstallationStatus::CheckingForUpdate,
                 );
-
-                let installed_version = zed::npm_package_installed_version(PACKAGE_NAME)?;
-                if !self.server_exists() || installed_version.as_deref() != Some(PACKAGE_VERSION) {
-                    zed::set_language_server_installation_status(
-                        language_server_id,
-                        &zed::LanguageServerInstallationStatus::Downloading,
-                    );
-
-                    if let Err(error) = zed::npm_install_package(PACKAGE_NAME, PACKAGE_VERSION) {
-                        // An already installed server is more useful than disabling
-                        // Liquid support because an update failed while offline.
-                        if !self.server_exists() {
-                            return Err(error);
-                        }
-                    }
-                }
-
+                self.ensure_npm_package(language_server_id, PACKAGE_NAME, PACKAGE_VERSION, || {
+                    self.server_exists()
+                })?;
                 if !self.server_exists() {
                     return Err(format!(
                         "installed package '{PACKAGE_NAME}' did not contain expected path '{SERVER_PATH}'",
@@ -172,58 +192,28 @@ impl LiquidExtension {
 
             if !self.did_find_support_packages {
                 for (package_name, package_version) in SUPPORT_PACKAGES {
-                    let installed_version = zed::npm_package_installed_version(package_name)?;
-                    if installed_version.as_deref() != Some(*package_version) {
-                        zed::set_language_server_installation_status(
-                            language_server_id,
-                            &zed::LanguageServerInstallationStatus::Downloading,
-                        );
-
-                        if let Err(error) = zed::npm_install_package(package_name, package_version)
-                        {
-                            // Keep an older usable package when an update fails
-                            // while offline. The installed server remains usable
-                            // as long as the package was present before the
-                            // attempted update.
-                            if installed_version.is_none() {
-                                return Err(error);
-                            }
-                        }
-                    }
-
-                    if zed::npm_package_installed_version(package_name)?.is_none() {
-                        return Err(format!(
-                            "installed package '{package_name}' is unavailable after installation",
-                        ));
-                    }
+                    self.ensure_npm_package(
+                        language_server_id,
+                        package_name,
+                        package_version,
+                        || {
+                            zed::npm_package_installed_version(package_name)
+                                .ok()
+                                .flatten()
+                                .is_some()
+                        },
+                    )?;
                 }
                 self.did_find_support_packages = true;
             }
 
             if !(self.did_find_typescript && self.typescript_exists()) {
-                let installed_version =
-                    zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
-                if !self.typescript_exists()
-                    || installed_version.as_deref() != Some(TYPESCRIPT_PACKAGE_VERSION)
-                {
-                    zed::set_language_server_installation_status(
-                        language_server_id,
-                        &zed::LanguageServerInstallationStatus::Downloading,
-                    );
-
-                    if let Err(error) = zed::npm_install_package(
-                        TYPESCRIPT_PACKAGE_NAME,
-                        TYPESCRIPT_PACKAGE_VERSION,
-                    ) {
-                        // Keep an older usable TypeScript installation when an
-                        // update fails while offline. Embedded support is better
-                        // than disabling the second language server entirely.
-                        if !self.typescript_exists() {
-                            return Err(error);
-                        }
-                    }
-                }
-
+                self.ensure_npm_package(
+                    language_server_id,
+                    TYPESCRIPT_PACKAGE_NAME,
+                    TYPESCRIPT_PACKAGE_VERSION,
+                    || self.typescript_exists(),
+                )?;
                 if !self.typescript_exists() {
                     return Err(format!(
                         "installed package '{TYPESCRIPT_PACKAGE_NAME}' did not contain expected path '{TYPESCRIPT_SERVER_PATH}'",
