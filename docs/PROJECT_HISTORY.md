@@ -341,6 +341,15 @@ package version when Zed writes the runtime script. A manual Zed host gate is
 recorded in [`RELEASE.md`](RELEASE.md) because no headless extension-host harness
 is available to this repository.
 
+### Host-facing rejection resilience
+
+The Shopify wrapper now logs unhandled promise rejections without terminating
+the long-lived LSP process. Truly uncaught exceptions still terminate because
+continuing after synchronous state corruption is unsafe. This boundary reflects
+Zed's current lifecycle: it does not automatically restart a language-server
+process after EOF, so terminating for every asynchronous rejection leaves the
+session permanently without completion or diagnostics.
+
 ### Maintainability and scale hardening — `0.25.0`
 
 The embedded support server was split into focused document-analysis,

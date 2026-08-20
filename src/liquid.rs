@@ -74,14 +74,22 @@ const EMBEDDED_SUPPORT_FILES: &[(&str, &str)] = &[
 const SERVER_WRAPPER: &str = r#"const { startServer } = require('./node_modules/@shopify/theme-language-server-node/dist/index.js');
 
 // Provider-level failures are handled by the LSP framework. A truly uncaught
-// failure can leave shared server state inconsistent, so log it to stderr and
-// exit cleanly for Zed to restart instead of continuing in an unknown state.
+// exception can leave shared server state inconsistent, so log it to stderr and
+// exit for Zed to report rather than continuing in an unknown state.
 function terminateAfterUnexpectedFailure(error) {
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   setImmediate(() => process.exit(1));
 }
+
+// An unhandled rejection is isolated to one asynchronous operation more often
+// than an uncaught exception. Keep the long-lived LSP process available for
+// later requests; Zed does not currently restart a server after it exits.
+function reportUnhandledRejection(reason) {
+  console.error(reason instanceof Error ? reason.stack || reason.message : String(reason));
+}
+
 process.once('uncaughtException', terminateAfterUnexpectedFailure);
-process.once('unhandledRejection', terminateAfterUnexpectedFailure);
+process.on('unhandledRejection', reportUnhandledRejection);
 
 startServer();
 "#;
@@ -332,7 +340,6 @@ mod tests {
     const EXTENSION_SOURCE: &str = include_str!("liquid.rs");
     const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
     const TEST_PACKAGE: &str = include_str!("../package.json");
-
     #[test]
     fn wrapper_starts_the_official_language_server_directly() {
         assert!(SERVER_WRAPPER.contains("@shopify/theme-language-server-node/dist/index.js"));
@@ -340,12 +347,14 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_keeps_protocol_output_clean_and_reports_async_failures() {
+    fn wrapper_keeps_protocol_output_clean_and_recovers_unhandled_rejections() {
         assert!(!SERVER_WRAPPER.contains("console.log"));
         assert!(SERVER_WRAPPER.contains("uncaughtException"));
         assert!(SERVER_WRAPPER.contains("unhandledRejection"));
         assert!(SERVER_WRAPPER.contains("console.error"));
         assert!(SERVER_WRAPPER.contains("process.exit(1)"));
+        assert!(SERVER_WRAPPER.contains("reportUnhandledRejection"));
+        assert!(!SERVER_WRAPPER.contains("process.once('unhandledRejection'"));
 
         let handler = SERVER_WRAPPER.find("uncaughtException").unwrap();
         let start = SERVER_WRAPPER.find("startServer();").unwrap();
