@@ -442,13 +442,16 @@ capture colors or structural indentation.
 
 ### Formatting
 
-`prettier_parser_name = "liquid-html"` delegates full-document formatting to
-Prettier when the project has `@shopify/prettier-plugin-liquid` configured.
-Shopify's plugin formats embedded stylesheet and JavaScript blocks. The embedded
-support server separately provides range formatting when a selection intersects
-those blocks. Tailwind formatting and completion remain user-configurable
-because they depend on each theme's build
-setup.
+`prettier_parser_name = "liquid-html"` identifies the parser for Zed's
+Prettier integration, but saved `.liquid` files also require the language
+setting `prettier.parser = "liquid-html"` because Zed gives that setting
+precedence for matching path suffixes. Themes with a project-local Prettier
+must install `@shopify/prettier-plugin-liquid` in their own `node_modules`;
+Zed's default Prettier installation is separate. Shopify's plugin formats
+embedded stylesheet and JavaScript blocks. The embedded support server
+separately provides range formatting when a selection intersects those blocks.
+Tailwind formatting and completion remain user-configurable because they depend
+on each theme's build setup.
 
 ## Design decisions
 

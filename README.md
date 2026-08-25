@@ -83,7 +83,16 @@ retaining checks on open and save.
 
 The language server formats selections contained in bundled stylesheet and
 JavaScript blocks. Use Shopify's Prettier plugin when formatting the complete
-Liquid document.
+Liquid document. Install the formatter and plugin in each theme that has a
+project-local `package.json`:
+
+```sh
+npm install --save-dev prettier @shopify/prettier-plugin-liquid
+```
+
+Then add the parser and plugin to Zed. The explicit `parser` is required for
+saved `.liquid` files; `prettier_parser_name` in the language extension does
+not override Zed's saved-file setting.
 
 ```json
 "lsp": {
@@ -99,6 +108,7 @@ Liquid document.
   "Liquid": {
     "prettier": {
       "allowed": true,
+      "parser": "liquid-html",
       "plugins": [
         "@shopify/prettier-plugin-liquid",
         "prettier-plugin-tailwindcss"
@@ -161,9 +171,10 @@ does not maintain a parallel implementation.
 The extension reuses Shopify's language server, but Zed does not currently have
 equivalents for the VS Code Theme Graph views, dead-code command, browser/VFS
 filesystem adapter, or bundled Prettier provider. Full-document formatting uses
-Zed's Prettier integration, so themes should install
-`@shopify/prettier-plugin-liquid` and configure it as shown above. Shopify JSON
-providers remain quiet for unrelated JSON files even though Zed's manifest
+Zed's Prettier integration. For a theme with a local Prettier installation,
+`@shopify/prettier-plugin-liquid` must exist in that theme's `node_modules`;
+installing it only in Zed's default Prettier environment is not enough. Shopify
+JSON providers remain quiet for unrelated JSON files even though Zed's manifest
 associates the server with the general `JSON` language.
 
 ## Development
