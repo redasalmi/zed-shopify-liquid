@@ -306,7 +306,6 @@ test('workspace-folder changes invalidate theme activation caches', { timeout: 1
         removed: [{ uri: pathToFileURL(theme.root).href, name: path.basename(theme.root) }],
       },
     });
-    client.change(uri, source, 2);
     assert.equal(
       await client.request('textDocument/completion', {
         textDocument: { uri },
@@ -314,10 +313,65 @@ test('workspace-folder changes invalidate theme activation caches', { timeout: 1
         context: { triggerKind: 2, triggerCharacter: '.' },
       }),
       null,
+      'removing a workspace must immediately deactivate its open documents',
     );
+
+    client.notify('workspace/didChangeWorkspaceFolders', {
+      event: {
+        added: [{ uri: pathToFileURL(theme.root).href, name: path.basename(theme.root) }],
+        removed: [],
+      },
+    });
+    const restored = await client.request('textDocument/completion', {
+      textDocument: { uri },
+      position,
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    });
+    assert(labels(restored).has('querySelector'));
   } finally {
     await client.stop();
     await theme.cleanup();
+  }
+});
+
+test('theme evidence changes immediately refresh open document activation', { timeout: 10_000 }, async () => {
+  const source = `{% javascript %}\ndocument.\n{% endjavascript %}`;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'zed-liquid-theme-refresh-'));
+  const sections = path.join(root, 'sections');
+  const filePath = path.join(sections, 'refresh.liquid');
+  const themeCheckPath = path.join(root, '.theme-check.yml');
+  await mkdir(sections);
+  await writeFile(filePath, source);
+  await writeFile(themeCheckPath, 'root: .\n');
+  const client = embeddedClient(root);
+
+  try {
+    await client.initialize({
+      workspace: { didChangeWatchedFiles: { dynamicRegistration: true } },
+      textDocument: { completion: {} },
+    });
+    const uri = client.open(filePath, source);
+    const params = {
+      textDocument: { uri },
+      position: positionAt(source, source.indexOf('document.') + 'document.'.length),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    };
+    assert(labels(await client.request('textDocument/completion', params)).has('querySelector'));
+
+    await rm(themeCheckPath);
+    client.notify('workspace/didChangeWatchedFiles', {
+      changes: [{ uri: pathToFileURL(themeCheckPath).href, type: 3 }],
+    });
+    assert.equal(await client.request('textDocument/completion', params), null);
+
+    await writeFile(themeCheckPath, 'root: .\n');
+    client.notify('workspace/didChangeWatchedFiles', {
+      changes: [{ uri: pathToFileURL(themeCheckPath).href, type: 1 }],
+    });
+    assert(labels(await client.request('textDocument/completion', params)).has('querySelector'));
+  } finally {
+    await client.stop();
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -391,6 +445,55 @@ test('duplicate bundled asset tags are not merged into one virtual document', { 
       context: { triggerKind: 2, triggerCharacter: '.' },
     });
     assert.equal(secondCompletion, null);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('line changes before stylesheets invalidate CSS position mappings', { timeout: 10_000 }, async () => {
+  const source = `<p>x</p>
+{% stylesheet %}
+:root { --brand: red; }
+.button { color: var(--brand); }
+{% endstylesheet %}`;
+  const theme = await createTheme({ 'sections/css-lines.liquid': source });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({ textDocument: { definition: {} } });
+    const uri = client.open(theme.file('sections/css-lines.liquid'), source);
+    const usageOffset = source.lastIndexOf('--brand') + 2;
+    await client.request('textDocument/definition', {
+      textDocument: { uri },
+      position: positionAt(source, usageOffset),
+    });
+
+    const changedOffset = source.indexOf('x');
+    const updatedSource = `${source.slice(0, changedOffset)}\n${source.slice(changedOffset + 1)}`;
+    client.changeIncrementally(
+      uri,
+      [
+        {
+          range: {
+            start: positionAt(source, changedOffset),
+            end: positionAt(source, changedOffset + 1),
+          },
+          text: '\n',
+        },
+      ],
+      2,
+    );
+
+    const definition = await client.request('textDocument/definition', {
+      textDocument: { uri },
+      position: positionAt(updatedSource, updatedSource.lastIndexOf('--brand') + 2),
+    });
+    assert.equal(locationUri(definition), uri);
+    assert.deepEqual(
+      definition.range.start,
+      positionAt(updatedSource, updatedSource.indexOf('--brand')),
+    );
   } finally {
     await client.stop();
     await theme.cleanup();

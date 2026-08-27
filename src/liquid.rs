@@ -32,24 +32,36 @@ const THEME_LANGUAGE_SERVER_COMMON_VERSION: &str = "2.22.1";
 const VSCODE_CSS_LANGUAGE_SERVICE_VERSION: &str = "6.3.2";
 const VSCODE_LANGUAGE_SERVER_VERSION: &str = "8.1.0";
 const VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION: &str = "1.0.12";
-const SUPPORT_PACKAGES: &[(&str, &str)] = &[
-    ("@shopify/liquid-html-parser", LIQUID_HTML_PARSER_VERSION),
+const SUPPORT_PACKAGES: &[(&str, &str, &str)] = &[
+    (
+        "@shopify/liquid-html-parser",
+        LIQUID_HTML_PARSER_VERSION,
+        "node_modules/@shopify/liquid-html-parser/dist/index.js",
+    ),
     (
         "@shopify/theme-check-docs-updater",
         THEME_CHECK_DOCS_UPDATER_VERSION,
+        "node_modules/@shopify/theme-check-docs-updater/dist/index.js",
     ),
     (
         "@shopify/theme-language-server-common",
         THEME_LANGUAGE_SERVER_COMMON_VERSION,
+        "node_modules/@shopify/theme-language-server-common/dist/utils/liquidDoc.js",
     ),
     (
         "vscode-css-languageservice",
         VSCODE_CSS_LANGUAGE_SERVICE_VERSION,
+        "node_modules/vscode-css-languageservice/lib/umd/cssLanguageService.js",
     ),
-    ("vscode-languageserver", VSCODE_LANGUAGE_SERVER_VERSION),
+    (
+        "vscode-languageserver",
+        VSCODE_LANGUAGE_SERVER_VERSION,
+        "node_modules/vscode-languageserver/node.js",
+    ),
     (
         "vscode-languageserver-textdocument",
         VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION,
+        "node_modules/vscode-languageserver-textdocument/lib/umd/main.js",
     ),
 ];
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
@@ -136,7 +148,7 @@ impl LiquidExtension {
         F: Fn() -> bool,
     {
         let installed_version = zed::npm_package_installed_version(package_name)?;
-        if installed_version.as_deref() != Some(package_version) {
+        if installed_version.as_deref() != Some(package_version) || !is_usable() {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
@@ -202,18 +214,18 @@ impl LiquidExtension {
         let result = (|| {
             self.server_script_path(language_server_id)?;
 
-            if !self.did_find_support_packages {
-                for (package_name, package_version) in SUPPORT_PACKAGES {
+            let support_packages_exist = || {
+                SUPPORT_PACKAGES.iter().all(|(_, _, entry_path)| {
+                    fs::metadata(entry_path).is_ok_and(|stat| stat.is_file())
+                })
+            };
+            if !(self.did_find_support_packages && support_packages_exist()) {
+                for (package_name, package_version, entry_path) in SUPPORT_PACKAGES {
                     self.ensure_npm_package(
                         language_server_id,
                         package_name,
                         package_version,
-                        || {
-                            zed::npm_package_installed_version(package_name)
-                                .ok()
-                                .flatten()
-                                .is_some()
-                        },
+                        || fs::metadata(entry_path).is_ok_and(|stat| stat.is_file()),
                     )?;
                 }
                 self.did_find_support_packages = true;
@@ -404,11 +416,13 @@ mod tests {
             package["devDependencies"][TYPESCRIPT_PACKAGE_NAME],
             TYPESCRIPT_PACKAGE_VERSION
         );
-        for (package_name, package_version) in SUPPORT_PACKAGES {
+        for (package_name, package_version, entry_path) in SUPPORT_PACKAGES {
             assert_eq!(
                 package["devDependencies"][*package_name], *package_version,
                 "support package pin must match the embedded server runtime",
             );
+            assert!(entry_path.starts_with("node_modules/"));
+            assert!(entry_path.ends_with(".js"));
         }
     }
 

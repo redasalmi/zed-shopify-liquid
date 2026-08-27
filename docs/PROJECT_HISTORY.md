@@ -406,6 +406,22 @@ eviction. The regression suite covers imported-module refresh and
 change-aware embedded-range reuse. The Shopify LiquidDoc private import is
 isolated in a compatibility module with an explicit API-shape failure.
 
+### Audit state invalidation hardening — `1.0.3`
+
+A repository-wide follow-up fixed several stale-state boundaries in the
+embedded support server. Line-structure edits outside an embedded block now
+invalidate virtual documents so CSS locations retain correct line mappings.
+Watched JavaScript and TypeScript module changes schedule diagnostics for open
+Liquid documents after refreshing TypeScript snapshots. Workspace-folder and
+theme-evidence changes immediately reanalyze open documents, activate or
+deactivate embedded services, clear obsolete diagnostics, and prevent cached
+imports from bypassing updated workspace boundaries.
+
+Runtime support-package checks now validate the concrete JavaScript entry points
+used by the embedded server, recheck them after an in-session server restart,
+and attempt to repair an exact-version package whose files have disappeared.
+Protocol regressions cover each state transition.
+
 ## Current architecture
 
 ### Extension host
@@ -423,7 +439,7 @@ work directory:
    local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
    diagnostics inside bundled JavaScript tags.
 
-The extension is currently version `1.0.0` and uses Zed extension API `0.7.0`.
+The extension is currently version `1.0.3` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

@@ -32,8 +32,28 @@ function embeddedStylesheet(source, rawTags, enabled) {
   return embeddedLanguage(source, 'stylesheet', rawTags, enabled);
 }
 
+function changesLineStructure(documentChange, ranges) {
+  if (!documentChange?.changes?.length || !documentChange.previousDocument) return false;
+
+  return documentChange.changes.some((change) => {
+    if (!change.range) return ranges.length > 0;
+    const start = documentChange.previousDocument.offsetAt(change.range.start);
+    if (!ranges.some((range) => start < range.end)) return false;
+    if (/[\r\n]/.test(change.text) || change.range.start.line !== change.range.end.line) {
+      return true;
+    }
+    const end = documentChange.previousDocument.offsetAt(change.range.end);
+    return /[\r\n]/.test(documentChange.previousDocument.getText().slice(start, end));
+  });
+}
+
 function sameEmbeddedLanguage(left, right, documentChange) {
-  if (left.ranges.length !== right.ranges.length) return false;
+  if (
+    left.ranges.length !== right.ranges.length ||
+    changesLineStructure(documentChange, left.ranges)
+  ) {
+    return false;
+  }
   if (!left.ranges.every((range, index) => {
     const candidate = right.ranges[index];
     return range.start === candidate.start && range.end === candidate.end;
@@ -131,6 +151,7 @@ function intersectingRanges(ranges, start, end) {
 }
 
 module.exports = {
+  changesLineStructure,
   containsOffset,
   containsSpan,
   embeddedJavaScript,

@@ -16,6 +16,7 @@ const {
 } = require('vscode-languageserver/node');
 const { TextDocument } = require('vscode-languageserver-textdocument');
 const {
+  changesLineStructure,
   containsOffset,
   containsSpan,
   embeddedJavaScript,
@@ -309,6 +310,20 @@ function filePathsForWorkspaceUri(uri) {
   }
 }
 
+function changeAffectsThemeRoots(change) {
+  let fileName;
+  try {
+    fileName = fileURLToPath(change.uri);
+  } catch (_error) {
+    return false;
+  }
+  const parts = path.resolve(fileName).split(path.sep);
+  return (
+    path.basename(fileName) === '.theme-check.yml' ||
+    parts.some((part) => part === 'config' || part === 'layout' || part === 'templates')
+  );
+}
+
 function invalidateImportedSnapshots(changes = []) {
   let invalidated = false;
   for (const change of changes) {
@@ -330,6 +345,21 @@ function invalidateImportedSnapshots(changes = []) {
     if (/\.(?:(?:c|m)?js|jsx|tsx?)$/i.test(fileName)) invalidated = true;
   }
   if (invalidated) projectVersion += 1;
+  return invalidated;
+}
+
+function resetImportedSnapshots() {
+  for (const fileName of importedSnapshotFiles) {
+    librarySnapshots.delete(fileName);
+    importedSnapshotVersions.set(
+      fileName,
+      (importedSnapshotVersions.get(fileName) || 0) + 1,
+    );
+  }
+  importedSnapshotFiles.clear();
+  // Workspace changes can alter both package and relative module resolution,
+  // including previously unresolved imports that have no cached snapshot.
+  projectVersion += 1;
 }
 
 function settingsCompletions(state, offset) {
@@ -458,15 +488,25 @@ function updateState(document, change) {
     supportsEmbeddedAssets && !resourceLimitedTags.has('stylesheet'),
   );
   const schemaSource = schemaSourceForSource(source, rawTags);
+  const scriptLineStructureChanged = changesLineStructure(
+    change,
+    previous?.embedded.ranges || [],
+  );
+  const stylesheetLineStructureChanged = changesLineStructure(
+    change,
+    previous?.stylesheet.ranges || [],
+  );
   const scriptChanged = previous
     ? analysisReuse
-      ? analysisReuse.shiftedRawTagNames.has('javascript') ||
+      ? scriptLineStructureChanged ||
+        analysisReuse.shiftedRawTagNames.has('javascript') ||
         previous.embedded.ranges.length !== embedded.ranges.length
       : !sameEmbeddedLanguage(previous.embedded, embedded, change)
     : embedded.ranges.length > 0;
   const stylesheetChanged = previous
     ? analysisReuse
-      ? analysisReuse.shiftedRawTagNames.has('stylesheet') ||
+      ? stylesheetLineStructureChanged ||
+        analysisReuse.shiftedRawTagNames.has('stylesheet') ||
         previous.stylesheet.ranges.length !== stylesheet.ranges.length
       : !sameEmbeddedLanguage(previous.stylesheet, stylesheet, change)
     : stylesheet.ranges.length > 0;
@@ -508,8 +548,20 @@ function updateState(document, change) {
   return state;
 }
 
+function refreshOpenDocumentStates() {
+  const openDocuments = [...statesByUri.values()].map((state) => state.document);
+  for (const document of openDocuments) scheduleValidation(updateState(document));
+}
+
+function revalidateActiveJavaScriptStates() {
+  for (const state of activeJavaScriptStates) {
+    state.needsValidation = true;
+    scheduleValidation(state);
+  }
+}
+
 function allowedTypeScriptPath(fileName) {
-  if (statesByFileName.has(fileName)) return true;
+  if (statesByFileName.get(fileName)?.embedded.ranges.length > 0) return true;
   if (!typescriptLibraryRoot) {
     typescriptLibraryRoot = path.dirname(require.resolve('typescript/lib/typescript.js'));
   }
@@ -547,9 +599,9 @@ const languageServiceHost = {
       return state.scriptSnapshot;
     }
 
+    if (!allowedTypeScriptPath(fileName)) return undefined;
     let snapshot = librarySnapshots.get(fileName);
     if (snapshot) return snapshot;
-    if (!allowedTypeScriptPath(fileName)) return undefined;
 
     const contents = ts.sys.readFile(fileName);
     if (contents === undefined) return undefined;
@@ -942,6 +994,9 @@ connection.onInitialized(() => {
         added.flatMap((folder) => filePathsForWorkspaceUri(folder.uri)),
         removed.flatMap((folder) => filePathsForWorkspaceUri(folder.uri)),
       );
+      resetImportedSnapshots();
+      refreshOpenDocumentStates();
+      revalidateActiveJavaScriptStates();
     });
   }
   if (supportsWatchedFileRegistration) {
@@ -959,8 +1014,13 @@ connection.onInitialized(() => {
   }
 });
 connection.onDidChangeWatchedFiles((params) => {
-  clearThemeRootCaches();
-  invalidateImportedSnapshots(params.changes);
+  if (params.changes.some(changeAffectsThemeRoots)) {
+    clearThemeRootCaches();
+    refreshOpenDocumentStates();
+  }
+  if (invalidateImportedSnapshots(params.changes)) {
+    revalidateActiveJavaScriptStates();
+  }
 });
 
 connection.onCompletion(async (params, cancellationToken) => {

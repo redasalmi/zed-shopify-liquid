@@ -59,3 +59,48 @@ model.
     await theme.cleanup();
   }
 });
+
+test('workspace module changes revalidate open embedded documents', { timeout: 20_000 }, async () => {
+  const source = `{% javascript %}
+import('./module').then(({ model }) => model.oldValue);
+{% endjavascript %}`;
+  const theme = await createTheme({
+    'sections/import-diagnostics.liquid': source,
+    'sections/module.ts': 'export const model = { oldValue: 1 };',
+  });
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize({
+      workspace: { didChangeWatchedFiles: { dynamicRegistration: true } },
+      textDocument: { publishDiagnostics: {} },
+    });
+    const uri = client.open(theme.file('sections/import-diagnostics.liquid'), source);
+    const initial = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) => params.uri === uri,
+    );
+    assert.equal(initial.diagnostics.length, 0);
+
+    await writeFile(theme.file('sections/module.ts'), 'export const model = { newValue: 1 };');
+    client.notify('workspace/didChangeWatchedFiles', {
+      changes: [
+        {
+          uri: pathToFileURL(theme.file('sections/module.ts')).href,
+          type: 2,
+        },
+      ],
+    });
+
+    const updated = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) =>
+        params.uri === uri &&
+        params.diagnostics.some((diagnostic) => /oldValue/.test(diagnostic.message)),
+    );
+    assert(updated.diagnostics.some((diagnostic) => /does not exist/.test(diagnostic.message)));
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});

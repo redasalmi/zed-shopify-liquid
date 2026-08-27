@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { TextDocument } = require('vscode-languageserver-textdocument');
 const {
+  changesLineStructure,
   embeddedJavaScript,
   sameEmbeddedLanguage,
 } = require('../../language-server/embedded-language.cjs');
@@ -44,6 +45,31 @@ test('embedded range comparison skips edits outside unchanged ranges', () => {
       }, '<!-- unrelated -->\n'),
     ),
     true,
+  );
+});
+
+test('embedded range comparison invalidates line changes outside a range', () => {
+  const source = '<p>x</p>\n{% javascript %}\nconst value = 1;\n{% endjavascript %}\n';
+  const characterOffset = source.indexOf('x');
+  const updated = `${source.slice(0, characterOffset)}\n${source.slice(characterOffset + 1)}`;
+  const change = documentChange(
+    source,
+    {
+      start: { line: 0, character: characterOffset },
+      end: { line: 0, character: characterOffset + 1 },
+    },
+    '\n',
+  );
+
+  const embedded = embeddedJavaScript(source, rangesFor(source), true);
+  assert.equal(changesLineStructure(change, embedded.ranges), true);
+  assert.equal(
+    sameEmbeddedLanguage(
+      embedded,
+      embeddedJavaScript(updated, rangesFor(updated), true),
+      change,
+    ),
+    false,
   );
 });
 
