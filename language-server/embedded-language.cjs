@@ -92,7 +92,7 @@ function sameEmbeddedLanguage(left, right, documentChange) {
 }
 
 function maskSource(source) {
-  return source.replace(/[^\r\n]/g, ' ');
+  return source.replace(/[^\r\n]+/g, (line) => ' '.repeat(line.length));
 }
 
 function injectAtStart(source, text) {
@@ -136,6 +136,17 @@ function embeddedSource(embedded) {
   return embedded.source;
 }
 
+function updateEmbeddedSource(previous, embedded, bodyChange) {
+  if (!bodyChange || previous?.source == null ||
+      previous.source.length !== previous.documentSource?.length) return;
+  const { start, end, text } = bodyChange;
+  if (containsSpan(previous.ranges, start, end) && embedded.ranges.length > 0) {
+    // A parser-verified raw-body edit can splice the existing masked document;
+    // no need to remask the surrounding HTML/Liquid on every keystroke.
+    embedded.source = previous.source.slice(0, start) + text + previous.source.slice(end);
+  }
+}
+
 function containsOffset(ranges, offset) {
   return ranges.some((range) => offset >= range.start && offset < range.end);
 }
@@ -159,4 +170,5 @@ module.exports = {
   embeddedStylesheet,
   intersectingRanges,
   sameEmbeddedLanguage,
+  updateEmbeddedSource,
 };

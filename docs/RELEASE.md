@@ -39,9 +39,15 @@ repository.
    verify Liquid and theme JSON completion. Confirm an unrelated `package.json`
    does not show Shopify JSON completions.
 4. In a file under `sections/`, verify JavaScript completion, hover,
-   diagnostics, definition, and range formatting inside `{% javascript %}`.
+   diagnostics, definition, signature help, local references, rename, and range
+   formatting inside `{% javascript %}`. Confirm rename preserves shorthand
+   property keys and refuses browser globals and imported symbols. Correct
+   `javascrip` to `javascript` and confirm completion activates without reopening.
    Verify `render 'cards/product'` navigates to nested snippets and traversal
-   references do not leave the theme root.
+   references do not leave the theme root. Navigate local setting IDs to their
+   schema declarations; ambiguous inline-block IDs should offer all matches.
+   Save a changed default schema locale and verify inline-block completion
+   documentation updates.
 5. Verify CSS custom-property definition and range formatting inside
    `{% stylesheet %}`.
 6. Verify no embedded results appear at either closing tag or in an unrelated

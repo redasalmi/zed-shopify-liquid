@@ -13,12 +13,18 @@ or other common prefixes offers ready-to-expand code blocks with tab stops.
 Bundled `{% stylesheet %}` blocks support CSS completion, hover, diagnostics, local
 custom-property navigation, and selection formatting. Bundled
 `{% javascript %}` blocks support JavaScript completion, hover,
-TypeScript-powered diagnostics, local symbol navigation, and selection
-formatting. Embedded asset semantics apply to Shopify-supported `sections/`,
+TypeScript-powered diagnostics, signature help, local symbol navigation,
+references, rename, and selection formatting. References and rename are limited
+to symbols declared in the same bundled block; imported symbols and browser
+globals are not partially renamed. Embedded asset semantics apply to Shopify-supported `sections/`,
 `blocks/`, and `snippets/` files; invalid tags elsewhere remain Shopify Theme
 Check diagnostics only.
 Schema-derived completion is also available for `section.settings.*` and
-`block.settings.*`, including inline blocks declared by a section. Shopify's
+`block.settings.*`, including inline blocks declared by a section. Go-to-definition
+on a setting ID navigates to its local schema declaration; ambiguous inline-block
+IDs offer all matching declarations. Inline-block completion documentation resolves
+`t:` labels and information from the theme's saved `*.default.schema.json` locale,
+refreshing after locale changes. Missing translations remain omitted. Shopify's
 language server provides modern `{% schema %}` completion and validation for
 `@theme`, `@app`, targeted and nested blocks, and presets. LiquidDoc `@param`
 declarations complete every supported primitive, array, and Shopify Liquid
@@ -70,9 +76,11 @@ document becomes inactive. TypeScript semantics and the extension's
 supplemental CSS navigation/formatting are limited to Shopify-supported
 `sections/`, `blocks/`, and `snippets/` files. Shopify's own stylesheet provider
 may still provide CSS completion, hover, and diagnostics in other Liquid files.
-To protect the editor process, documents over 2 MiB
-or embedded blocks over 512 KiB receive an informational diagnostic instead of
-loading embedded semantics. For very large themes, setting
+To protect the support-server process, documents over 2 × 1024² UTF-16 code
+units receive an informational diagnostic before Liquid parsing, and all
+supplemental features are disabled until the document shrinks. Individual embedded
+blocks over 512 × 1024 code units disable that block's supplemental semantics.
+Shopify's separate language server and Tree-sitter highlighting remain independent. For very large themes, setting
 `themeCheck.preloadOnBoot` to `false`
 reduces Shopify language-server startup work and memory at the cost of making
 some whole-theme navigation operations slower on first use. Setting
@@ -134,6 +142,8 @@ responsive editing over legacy compound asset modes.
 - [x] TypeScript-powered JavaScript support in `{% javascript %}` blocks
 - [x] Lazy loading and bounded memory for embedded JavaScript analysis
 - [x] Schema-derived `section.settings` and `block.settings` completion
+- [x] Setting-to-schema navigation and localized inline-block completion documentation
+- [x] Bundled JavaScript signature help, local references, and safe local rename
 
 ### Next
 

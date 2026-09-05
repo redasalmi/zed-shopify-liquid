@@ -422,6 +422,51 @@ used by the embedded server, recheck them after an in-session server restart,
 and attempt to repair an exact-version package whose files have disappeared.
 Protocol regressions cover each state transition.
 
+### Audit follow-up: bounded parsing and embedded editing — `1.1.0`
+
+The supplemental document-size limit now runs before Liquid AST construction,
+not after it, and also gates lazy static-reference parsing. Oversized documents
+receive a document-level informational diagnostic and recover automatically when
+they shrink. The regression uses a markup-dense document above the default limit
+rather than only lowering the threshold for a tiny fixture.
+
+Unparsed analysis is now explicitly marked and its cheap relevance gate is
+rechecked during incremental reuse, so keyword-only repairs such as `javascrip`
+to `javascript` activate providers immediately. Safe JavaScript and stylesheet
+body edits update the parsed ranges and splice existing virtual sources; possible
+Liquid delimiters fall back to tolerant parsing. Document opens are analyzed once
+through TextDocuments' content-change event, and initial masking operates on
+non-newline runs rather than individual characters.
+
+The shared TypeScript host records resolved module dependencies. Watched module
+changes revalidate their direct and transitive consumers rather than every open
+JavaScript document; newly created files refresh unresolved imports. Package and
+workspace changes conservatively invalidate module resolution. The dense ranged
+editing workload and current measurements are documented in `PERFORMANCE.md`.
+
+The same lazy TypeScript service now provides signature help and same-block
+symbol references and rename. Rename is refused for external declarations,
+invalid names, or any result extending outside the supported block; shorthand
+properties retain TypeScript's prefix/suffix edits. No per-request service or new
+dependency was added.
+
+Setting-ID definitions now navigate to local section and Theme Block schema
+settings, returning all matching traditional inline-block declarations when
+ambiguous. Liquid AST lookups exclude strings and comments, and a bounded-depth
+JSON token walk retains schema-relative positions without keeping a second AST.
+Inline-block completion resolves translated labels and information from saved
+default schema locales with bounded per-theme caching and watched-file
+invalidation. Missing, malformed, or oversized locales preserve untranslated
+fallback behavior. The focused `schema-settings.cjs` helper is deployed alongside
+the other runtime support modules by the Rust extension.
+
+Pre-release review regressions additionally cover private-field rename preserving
+`#`, including clients submitting bare names; conservative revalidation for loaded
+TypeScript dependencies (such as triple-slash declarations) without module edges;
+and Shopify-compatible schema-locale JSONC parsing. Locale parsing uses the existing
+public Shopify parser lazily, accepts comments and trailing commas, and still
+omits translations from genuinely malformed files.
+
 ## Current architecture
 
 ### Extension host
@@ -436,10 +481,11 @@ work directory:
 2. **Liquid Embedded Support** (`liquid-embedded-javascript`) — supplements
    inline section-block setting completion, paired-brace LiquidDoc parameter
    type completion, static file definitions, embedded range formatting, and
-   local CSS/JavaScript definitions, and owns JavaScript completion, hover, and
-   diagnostics inside bundled JavaScript tags.
+   local CSS/JavaScript and setting-ID definitions, localized inline-block setting
+   documentation, and owns JavaScript completion, hover, diagnostics, signature
+   help, same-block references, and rename inside bundled JavaScript tags.
 
-The extension is currently version `1.0.3` and uses Zed extension API `0.7.0`.
+The extension is currently version `1.1.0` and uses Zed extension API `0.7.0`.
 
 ### Tree-sitter
 

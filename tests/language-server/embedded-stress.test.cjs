@@ -157,6 +157,57 @@ test('multiple large embedded documents remain within the process budget', { tim
   }
 });
 
+test('dense Liquid ranged edits reuse analysis within the process budget', { timeout: 60_000 }, async (t) => {
+  const padding = '<div class="product">{{ product.title | escape }}</div>\n'.repeat(4000);
+  const source = padding + '{% javascript %}\nconst value = 1;\ndocument.querySelector("main");\nvalue;\n{% endjavascript %}';
+  const theme = await createTheme({ 'sections/dense.liquid': source });
+  const client = embeddedClient(theme.root, { env: { LIQUID_PERFORMANCE_LOGGING: '1' } });
+  try {
+    await client.initialize({ textDocument: { completion: {}, definition: {} } });
+    const uri = client.open(theme.file('sections/dense.liquid'), source);
+    const params = {
+      textDocument: { uri }, position: positionAt(source, source.indexOf('document.') + 9),
+      context: { triggerKind: 2, triggerCharacter: '.' },
+    };
+    assert(completionItems(await client.request('textDocument/completion', params))
+      .some((item) => item.label === 'querySelector'));
+    const valueOffset = source.indexOf('const value = ') + 14;
+    const range = { start: positionAt(source, valueOffset), end: positionAt(source, valueOffset + 1) };
+    const timings = [];
+    let maximumRss = residentSetMiB(client.process.pid);
+    for (let index = 0; index < 100; index += 1) {
+      const startedAt = performance.now();
+      client.changeIncrementally(uri, [{ range, text: String(index % 10) }], index + 2);
+      assert(completionItems(await client.request('textDocument/completion', params))
+        .some((item) => item.label === 'querySelector'));
+      timings.push(performance.now() - startedAt);
+      if (index % 10 === 0) {
+        const rss = residentSetMiB(client.process.pid);
+        if (rss !== null) maximumRss = Math.max(maximumRss ?? rss, rss);
+        const definition = await client.request('textDocument/definition', {
+          textDocument: { uri }, position: positionAt(source, source.lastIndexOf('value;') + 2),
+        });
+        assert.deepEqual(definition[0].range.start, positionAt(source, source.indexOf('const value') + 6));
+      }
+    }
+    const analysisLogs = client.notifications.filter((message) => message.method === 'window/logMessage' &&
+      message.params.message.startsWith('Liquid analysis')).map((message) => message.params.message);
+    assert.equal(analysisLogs.filter((message) => message.startsWith('Liquid analysis parsed')).length, 1);
+    assert.equal(analysisLogs.filter((message) => message.startsWith('Liquid analysis reused')).length, 100);
+    if (maximumRss !== null) {
+      assert(maximumRss <= Number(process.env.LIQUID_STRESS_RSS_LIMIT_MIB || DEFAULT_RSS_LIMIT_MIB),
+        `dense document RSS reached ${maximumRss.toFixed(1)} MiB`);
+    }
+    timings.sort((a, b) => a - b);
+    t.diagnostic(`100 dense ${Math.round(source.length / 1024)} KiB ranged edits averaged ` +
+      `${(timings.reduce((sum, value) => sum + value, 0) / timings.length).toFixed(2)} ms; ` +
+      `p95=${timings[94].toFixed(2)} ms; max RSS=${maximumRss?.toFixed(1) ?? 'n/a'} MiB`);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('embedded server remains bounded and discards stale document state', { timeout: 120_000 }, async (t) => {
   const initialSource = `{% javascript %}
 const removedSymbol=1;

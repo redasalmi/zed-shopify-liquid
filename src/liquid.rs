@@ -82,6 +82,10 @@ const EMBEDDED_SUPPORT_FILES: &[(&str, &str)] = &[
         "theme-roots.cjs",
         include_str!("../language-server/theme-roots.cjs"),
     ),
+    (
+        "schema-settings.cjs",
+        include_str!("../language-server/schema-settings.cjs"),
+    ),
 ];
 const SERVER_WRAPPER: &str = r#"const { startServer } = require('./node_modules/@shopify/theme-language-server-node/dist/index.js');
 

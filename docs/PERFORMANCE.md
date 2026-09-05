@@ -17,13 +17,17 @@ The repeatable protocol workloads enforce these default budgets:
   remain under the same 384 MiB process budget;
 - disposing and recreating TypeScript may add at most 96 MiB over the first warm
   state;
-- warm incremental JavaScript requests should remain comfortably below a 15 ms
-  average locally, while tests report timings instead of imposing a
+- the small-file warm incremental JavaScript workload should remain comfortably
+  below a 15 ms average locally, while tests report timings instead of imposing a
   hardware-sensitive latency assertion;
 - V8's old-generation heap remains capped at 128 MiB;
-- documents over 2 MiB and individual embedded blocks over 512 KiB degrade to
-  an informational diagnostic without loading their semantic service;
-- imported workspace modules are limited to 128 files of at most 1 MiB each.
+- documents over 2 × 1024² UTF-16 code units skip Liquid parsing and all
+  supplemental providers, returning an informational diagnostic; individual
+  embedded blocks over 512 × 1024 code units disable that block's semantics;
+- imported workspace modules are limited to 128 files of at most 1 Mi code units each;
+- saved schema locale data is cached for at most 16 theme roots, with a 1 MiB
+  file-size limit and bounded reads; missing or oversized locales omit translated
+  documentation without disabling completion.
 
 The resource limits can be overridden with
 `LIQUID_MAX_EMBEDDED_DOCUMENT_CODE_UNITS`,
@@ -60,20 +64,40 @@ The RSS limits can be adjusted for constrained or unusual hosts with
     theme-root caches use bounded LRU-style eviction and invalidate when
     watched files or workspace folders change.
 11. Keep the server under `--max-old-space-size=128`.
+12. Analyze each document-open event once. For edits within parser-verified
+    JavaScript/stylesheet bodies, update ranges and splice cached virtual sources
+    instead of reparsing the surrounding HTML/Liquid. Existing or newly assembled
+    Liquid tag delimiters force a clean parse. Mask non-newline runs rather than
+    individual characters when a virtual source must be rebuilt.
+13. Track resolved module dependencies, including transitive imports. Watched
+    module changes revalidate only their active consumers. File creation also
+    refreshes unresolved imports; package metadata and workspace changes retain
+    conservative resolution invalidation.
+14. Resolve localized inline-block setting documentation lazily without loading
+    TypeScript; invalidate locale caches on saved schema-locale, theme-root, and
+    workspace changes.
 
 ## Regression workloads
 
-`npm run test:stress` covers four independent cases:
+`npm run test:stress` covers five independent cases:
 
 1. repeated large Liquid updates without embedded assets;
 2. 12 simultaneously open 256 KiB Liquid documents with JavaScript semantics;
 3. 300 unique JavaScript updates with completion, definition, diagnostics, and
    stale-state assertions;
-4. TypeScript idle disposal followed by successful lazy recreation.
+4. TypeScript idle disposal followed by successful lazy recreation;
+5. 100 ranged JavaScript edits in a roughly 219 KiB markup-dense Liquid document,
+   verifying one initial parse, subsequent analysis reuse, correct definitions,
+   completion, and the 384 MiB RSS ceiling. Mean and p95 latency are reported.
+
+A local Node 24 run of the dense workload averaged 28.6 ms with a 31.9 ms p95
+and approximately 256 MiB maximum sampled RSS. These are development measurements,
+not cross-platform guarantees.
 
 Protocol and unit contracts additionally cover graceful oversized-document
-handling, workspace-root cache invalidation, imported workspace-module refresh,
-change-aware embedded-range comparison, and 500 deterministic differential
+handling (including a markup-dense document exceeding the default limit),
+keyword-only tag repairs, workspace-root cache invalidation, targeted and
+unresolved imported-module refresh, change-aware embedded-range comparison, and 500 deterministic differential
 incremental edits compared with clean parser results.
 
 RSS is sampled on Linux and macOS. Other platforms run the semantic, lifecycle,

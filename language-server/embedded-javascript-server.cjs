@@ -24,8 +24,15 @@ const {
   embeddedStylesheet,
   intersectingRanges,
   sameEmbeddedLanguage,
+  updateEmbeddedSource,
 } = require('./embedded-language.cjs');
 const { liquidDocTools } = require('./liquid-doc-tools.cjs');
+const {
+  clearSchemaLocaleCaches,
+  schemaLocale,
+  schemaSettingLocations,
+  settingDocumentation,
+} = require('./schema-settings.cjs');
 const {
   analyzeLiquidDocument,
   parseSchema,
@@ -69,6 +76,8 @@ const validationTimers = new Map();
 const librarySnapshots = new Map();
 const importedSnapshotFiles = new Set();
 const importedSnapshotVersions = new Map();
+const moduleDependencies = new Map();
+const invalidatedModuleResolutions = new Set();
 const configuredTypescriptIdleMilliseconds = Number.parseInt(
   process.env.LIQUID_TYPESCRIPT_IDLE_MS || '',
   10,
@@ -255,6 +264,7 @@ async function liquidDocTypeCompletions(state, offset) {
 }
 
 async function definitionForReference(state, offset) {
+  if (state.documentTooLarge) return null;
   if (!state.definitionReferences) {
     state.definitionReferences = referencesInSource(state.document.getText());
   }
@@ -325,13 +335,48 @@ function changeAffectsThemeRoots(change) {
 }
 
 function invalidateImportedSnapshots(changes = []) {
-  let invalidated = false;
+  const affected = new Set();
   for (const change of changes) {
     let fileName;
     try {
       fileName = path.resolve(fileURLToPath(change.uri));
     } catch (_error) {
       continue;
+    }
+    const isModuleFile = /\.(?:(?:c|m)?[jt]s|jsx|tsx)$/i.test(fileName);
+    const packageChanged = path.basename(fileName) === 'package.json';
+    if (!isModuleFile && !packageChanged) continue;
+    const invalidatedForChange = new Set();
+    for (const [containingFile, dependencies] of moduleDependencies) {
+      if (packageChanged || dependencies.files.has(fileName) ||
+          (change.type === 1 && dependencies.unresolved)) {
+        invalidatedModuleResolutions.add(containingFile);
+        invalidatedForChange.add(containingFile);
+      }
+    }
+    // Triple-slash references can load snapshots without resolveModuleNames.
+    // Without module edges we cannot identify their consumers, so conservatively
+    // refresh all active documents rather than retaining stale type information.
+    const untrackedDependency = importedSnapshotFiles.has(fileName) && invalidatedForChange.size === 0;
+    for (const state of activeJavaScriptStates) {
+      if (untrackedDependency) {
+        affected.add(state);
+        continue;
+      }
+      const pending = [state.fileName];
+      const visited = new Set();
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (visited.has(current)) continue;
+        visited.add(current);
+        if (current === fileName || invalidatedForChange.has(current)) {
+          affected.add(state);
+          break;
+        }
+        for (const dependency of moduleDependencies.get(current)?.files || []) {
+          pending.push(dependency);
+        }
+      }
     }
     const removedSnapshot = librarySnapshots.delete(fileName);
     const removedImportedFile = importedSnapshotFiles.delete(fileName);
@@ -340,15 +385,14 @@ function invalidateImportedSnapshots(changes = []) {
         fileName,
         (importedSnapshotVersions.get(fileName) || 0) + 1,
       );
-      invalidated = true;
     }
-    if (/\.(?:(?:c|m)?js|jsx|tsx?)$/i.test(fileName)) invalidated = true;
   }
-  if (invalidated) projectVersion += 1;
-  return invalidated;
+  if (affected.size > 0) projectVersion += 1;
+  return affected;
 }
 
 function resetImportedSnapshots() {
+  for (const fileName of moduleDependencies.keys()) invalidatedModuleResolutions.add(fileName);
   for (const fileName of importedSnapshotFiles) {
     librarySnapshots.delete(fileName);
     importedSnapshotVersions.set(
@@ -362,7 +406,7 @@ function resetImportedSnapshots() {
   projectVersion += 1;
 }
 
-function settingsCompletions(state, offset) {
+async function settingsCompletions(state, offset) {
   const source = state.document.getText();
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
   const match = /\b(section|block)\.settings\.([a-zA-Z0-9_-]*)$/.exec(
@@ -380,11 +424,10 @@ function settingsCompletions(state, offset) {
   // Shopify's server already completes section settings and settings in Theme
   // Block files. Only supplement its upstream gap for inline blocks declared
   // by traditional section schemas, avoiding duplicate entries in Zed.
-  if (
-    objectName !== 'block' ||
-    !pathName.includes('/sections/') ||
-    !themeRootForStandardFile(state.sourceFileName || state.fileName, EMBEDDED_THEME_DIRECTORIES)
-  ) {
+  const root = themeRootForStandardFile(
+    state.sourceFileName || state.fileName, EMBEDDED_THEME_DIRECTORIES,
+  );
+  if (objectName !== 'block' || !pathName.includes('/sections/') || !root) {
     return null;
   }
 
@@ -405,24 +448,56 @@ function settingsCompletions(state, offset) {
           kind: CompletionItemKind.Property,
         };
         if (typeof setting.type === 'string') item.detail = `Shopify ${setting.type} setting`;
-        const documentation = [setting.label, setting.info]
-          .filter(
-            (value) =>
-              typeof value === 'string' && value.length > 0 && !value.startsWith('t:'),
-          )
-          .join('\n\n');
-        if (documentation) item.documentation = documentation;
-        return item;
+        return { item, setting };
       });
   }
 
+  const needsLocale = state.inlineBlockSettingItems.some(({ setting }) =>
+    [setting.label, setting.info].some((value) => typeof value === 'string' && value.startsWith('t:')),
+  );
+  const locale = needsLocale ? await schemaLocale(root) : null;
+  if (!state.localizedSettingItems || state.settingLocaleVersion !== locale?.version) {
+    // Retain only the version and the documentation actually used by this
+    // schema, so open documents cannot pin evicted complete locale dictionaries.
+    state.settingLocaleVersion = locale?.version;
+    state.localizedSettingItems = state.inlineBlockSettingItems.map(({ item, setting }) => {
+      const documentation = settingDocumentation(setting, locale?.data);
+      return documentation ? { ...item, documentation } : item;
+    });
+  }
   return {
     isIncomplete: false,
-    items: state.inlineBlockSettingItems.filter((item) => item.label.startsWith(partial)),
+    items: state.localizedSettingItems.filter((item) => item.label.startsWith(partial)),
   };
 }
 
-function embeddedResourceLimits(source, rawTags, enabled) {
+function settingDefinitions(state, offset) {
+  if (!state.schema) return null;
+  const reference = state.settingReferences.find(
+    (reference) => offset >= reference.start && offset < reference.end,
+  );
+  if (!reference) return null;
+  const root = themeRootForStandardFile(state.sourceFileName, EMBEDDED_THEME_DIRECTORIES);
+  if (!root) return null;
+  const category = path.basename(path.dirname(state.sourceFileName));
+  if (category !== 'sections' && category !== 'blocks') return null;
+  if (reference.objectName === 'section' && category !== 'sections') return null;
+  const inlineBlock = reference.objectName === 'block' && category === 'sections';
+  state.schemaSettingLocations ||= schemaSettingLocations(state.schemaSource);
+  const schemaStart = state.rawTags.find((node) => node.name === 'schema').body.position.start;
+  const locations = state.schemaSettingLocations
+    .filter((location) => location.id === reference.id && location.inlineBlock === inlineBlock)
+    .map((location) => ({
+      uri: state.document.uri,
+      range: rangeForSpan(state.document, {
+        start: schemaStart + location.start,
+        length: location.end - location.start,
+      }),
+    }));
+  return locations.length > 0 ? locations : null;
+}
+
+function embeddedResourceLimits(rawTags, enabled) {
   if (!enabled) return [];
 
   const limits = [];
@@ -431,11 +506,7 @@ function embeddedResourceLimits(source, rawTags, enabled) {
     if (!tag) continue;
     const blockLength = tag.body.position.end - tag.body.position.start;
     let message;
-    if (source.length > maxEmbeddedDocumentCodeUnits) {
-      message =
-        `Embedded ${tagName} support is disabled because this Liquid document ` +
-        `exceeds ${maxEmbeddedDocumentCodeUnits} UTF-16 code units.`;
-    } else if (blockLength > maxEmbeddedBlockCodeUnits) {
+    if (blockLength > maxEmbeddedBlockCodeUnits) {
       message =
         `Embedded ${tagName} support is disabled because this block exceeds ` +
         `${maxEmbeddedBlockCodeUnits} UTF-16 code units.`;
@@ -465,8 +536,16 @@ function resourceLimitDiagnostics(state) {
 function updateState(document, change) {
   const previous = statesByUri.get(document.uri);
   const source = document.getText();
-  const analysisReuse = reusableAnalysis(previous, change);
-  const analysis = analysisReuse?.analysis || analyzeLiquidDocument(source);
+  // Limit all supplemental parser entry points, not only TypeScript. Building
+  // the Liquid AST itself can exhaust the heap before embedded limits run.
+  const documentTooLarge = source.length > maxEmbeddedDocumentCodeUnits;
+  const analysisReuse = documentTooLarge ? null : reusableAnalysis(previous, change);
+  const analysis = documentTooLarge
+    ? { rawTags: [], liquidExpressionRanges: [], settingReferences: [], analysisReusable: false }
+    : analysisReuse?.analysis || analyzeLiquidDocument(source);
+  if (performanceLogging) {
+    connection.console.info(`Liquid analysis ${documentTooLarge ? 'limited' : analysisReuse ? 'reused' : 'parsed'}: ${document.uri}`);
+  }
   const rawTags = analysis.rawTags;
   let sourceFileName;
   try {
@@ -475,7 +554,13 @@ function updateState(document, change) {
     sourceFileName = document.uri;
   }
   const supportsEmbeddedAssets = fileSupportsEmbeddedAssets(sourceFileName);
-  const resourceLimits = embeddedResourceLimits(source, rawTags, supportsEmbeddedAssets);
+  const resourceLimits = documentTooLarge
+    ? [{
+        message: 'Supplemental Liquid support is disabled because this document ' +
+          `exceeds ${maxEmbeddedDocumentCodeUnits} UTF-16 code units.`,
+        position: { start: 0, end: 1 },
+      }]
+    : embeddedResourceLimits(rawTags, supportsEmbeddedAssets);
   const resourceLimitedTags = new Set(resourceLimits.map((limit) => limit.tagName));
   const embedded = embeddedJavaScript(
     source,
@@ -499,6 +584,7 @@ function updateState(document, change) {
   const scriptChanged = previous
     ? analysisReuse
       ? scriptLineStructureChanged ||
+        analysisReuse.rawBodyChange?.tagName === 'javascript' ||
         analysisReuse.shiftedRawTagNames.has('javascript') ||
         previous.embedded.ranges.length !== embedded.ranges.length
       : !sameEmbeddedLanguage(previous.embedded, embedded, change)
@@ -506,12 +592,18 @@ function updateState(document, change) {
   const stylesheetChanged = previous
     ? analysisReuse
       ? stylesheetLineStructureChanged ||
+        analysisReuse.rawBodyChange?.tagName === 'stylesheet' ||
         analysisReuse.shiftedRawTagNames.has('stylesheet') ||
         previous.stylesheet.ranges.length !== stylesheet.ranges.length
       : !sameEmbeddedLanguage(previous.stylesheet, stylesheet, change)
     : stylesheet.ranges.length > 0;
   if (previous && !scriptChanged) embedded.source = previous.embedded.source;
   if (previous && !stylesheetChanged) stylesheet.source = previous.stylesheet.source;
+  if (analysisReuse?.rawBodyChange?.tagName === 'javascript') {
+    updateEmbeddedSource(previous.embedded, embedded, analysisReuse.rawBodyChange);
+  } else if (analysisReuse?.rawBodyChange?.tagName === 'stylesheet') {
+    updateEmbeddedSource(previous.stylesheet, stylesheet, analysisReuse.rawBodyChange);
+  }
   const hadEmbeddedJavaScript = (previous?.embedded.ranges.length ?? 0) > 0;
   const hadResourceLimits = (previous?.resourceLimits.length ?? 0) > 0;
   const state = {
@@ -519,16 +611,25 @@ function updateState(document, change) {
     embedded,
     stylesheet,
     resourceLimits,
+    documentTooLarge,
     sourceFileName,
     fileName: previous?.fileName || fileNameForUri(document.uri),
     rawTags,
     analysisReusable: analysis.analysisReusable,
+    analysisSkipped: analysis.analysisSkipped,
     liquidExpressionRanges: analysis.liquidExpressionRanges,
+    settingReferences: analysis.settingReferences,
     schema:
       schemaSource === previous?.schemaSource ? previous.schema : parseSchema(schemaSource),
     schemaSource,
     inlineBlockSettingItems:
       schemaSource === previous?.schemaSource ? previous.inlineBlockSettingItems : undefined,
+    localizedSettingItems:
+      schemaSource === previous?.schemaSource ? previous.localizedSettingItems : undefined,
+    settingLocaleVersion:
+      schemaSource === previous?.schemaSource ? previous.settingLocaleVersion : undefined,
+    schemaSettingLocations:
+      schemaSource === previous?.schemaSource ? previous.schemaSettingLocations : undefined,
     hadEmbeddedJavaScript,
     hadResourceLimits,
     cssDocument: stylesheetChanged ? undefined : previous?.cssDocument,
@@ -553,8 +654,8 @@ function refreshOpenDocumentStates() {
   for (const document of openDocuments) scheduleValidation(updateState(document));
 }
 
-function revalidateActiveJavaScriptStates() {
-  for (const state of activeJavaScriptStates) {
+function revalidateActiveJavaScriptStates(states = activeJavaScriptStates) {
+  for (const state of states) {
     state.needsValidation = true;
     scheduleValidation(state);
   }
@@ -622,16 +723,24 @@ const languageServiceHost = {
     statesByFileName.has(fileName) ? ts.ScriptKind.JS : ts.getScriptKindFromFileName(fileName),
   getCurrentDirectory: () => process.cwd(),
   getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-  resolveModuleNames: (moduleNames, containingFile) =>
-    moduleNames.map((moduleName) => {
+  hasInvalidatedResolutions: (fileName) => invalidatedModuleResolutions.has(fileName),
+  resolveModuleNames: (moduleNames, containingFile) => {
+    const dependencies = { files: new Set(), unresolved: false };
+    const resolved = moduleNames.map((moduleName) => {
       const resolvedModule = ts.resolveModuleName(
         moduleName,
         containingFile,
         compilerOptions,
         languageServiceHost,
       ).resolvedModule;
+      if (resolvedModule) dependencies.files.add(path.resolve(resolvedModule.resolvedFileName));
+      else dependencies.unresolved = true;
       return resolvedModule;
-    }),
+    });
+    moduleDependencies.set(containingFile, dependencies);
+    invalidatedModuleResolutions.delete(containingFile);
+    return resolved;
+  },
   fileExists: (fileName) => allowedTypeScriptPath(fileName) && ts.sys.fileExists(fileName),
   readFile: (fileName) =>
     allowedTypeScriptPath(fileName) ? ts.sys.readFile(fileName) : undefined,
@@ -667,6 +776,8 @@ function disposeLanguageService() {
   librarySnapshots.clear();
   importedSnapshotFiles.clear();
   importedSnapshotVersions.clear();
+  moduleDependencies.clear();
+  invalidatedModuleResolutions.clear();
   languageServiceIdleTimer = undefined;
   if (performanceLogging) connection.console.info('TypeScript language service disposed');
 }
@@ -746,6 +857,56 @@ function javascriptDefinitions(state, offset) {
     ];
   });
   return locations.length > 0 ? locations : null;
+}
+
+function localJavaScriptSpan(state, entry) {
+  return entry.fileName === state.fileName && containsSpan(
+    state.embedded.ranges, entry.textSpan.start, entry.textSpan.start + entry.textSpan.length,
+  );
+}
+
+function localJavaScriptSymbol(state, offset) {
+  if (!containsOffset(state.embedded.ranges, offset)) return false;
+  const definitions = ensureLanguageService().getDefinitionAtPosition(state.fileName, offset);
+  // Do not offer a partial refactor of imported symbols or browser globals.
+  return definitions?.length > 0 && definitions.every((entry) => localJavaScriptSpan(state, entry));
+}
+
+function javascriptRenameInfo(state, offset) {
+  if (!localJavaScriptSymbol(state, offset)) return null;
+  const info = ensureLanguageService().getRenameInfo(state.fileName, offset, {
+    allowRenameOfImportPath: false,
+  });
+  if (!info.canRename || info.fileToRename || !containsSpan(
+    state.embedded.ranges, info.triggerSpan.start, info.triggerSpan.start + info.triggerSpan.length,
+  )) return null;
+  return info;
+}
+
+function javascriptSignatureHelp(state, offset) {
+  if (!containsOffset(state.embedded.ranges, offset)) return null;
+  const help = ensureLanguageService().getSignatureHelpItems(state.fileName, offset, undefined);
+  if (!help || !containsSpan(
+    state.embedded.ranges, help.applicableSpan.start, help.applicableSpan.start + help.applicableSpan.length,
+  )) return null;
+  return {
+    signatures: help.items.map((item) => ({
+      label: ts.displayPartsToString(item.prefixDisplayParts) +
+        item.parameters.map((parameter) => ts.displayPartsToString(parameter.displayParts))
+          .join(ts.displayPartsToString(item.separatorDisplayParts)) +
+        ts.displayPartsToString(item.suffixDisplayParts),
+      documentation: ts.displayPartsToString(item.documentation),
+      parameters: item.parameters.map((parameter) => ({
+        label: ts.displayPartsToString(parameter.displayParts),
+        documentation: ts.displayPartsToString(parameter.documentation),
+      })),
+      activeParameter: item.isVariadic
+        ? Math.min(help.argumentIndex, Math.max(0, item.parameters.length - 1))
+        : help.argumentIndex,
+    })),
+    activeSignature: help.selectedItemIndex,
+    activeParameter: help.argumentIndex,
+  };
 }
 
 function stylesheetDefinition(state, offset) {
@@ -885,6 +1046,7 @@ function validate(uri) {
     return;
   }
 
+  if (performanceLogging) connection.console.info(`Validating JavaScript: ${uri}`);
   const limitedDiagnostics = resourceLimitDiagnostics(state);
   if (state.embedded.ranges.length === 0) {
     connection.sendDiagnostics({ uri, diagnostics: limitedDiagnostics });
@@ -974,6 +1136,9 @@ connection.onInitialize((params) => {
         triggerCharacters: ['.', '"', "'", '{', '@'],
       },
       definitionProvider: true,
+      signatureHelpProvider: { triggerCharacters: ['(', ','], retriggerCharacters: [')'] },
+      renameProvider: { prepareProvider: true },
+      referencesProvider: true,
       documentRangeFormattingProvider: true,
       hoverProvider: true,
       workspace: {
@@ -995,6 +1160,7 @@ connection.onInitialized(() => {
         removed.flatMap((folder) => filePathsForWorkspaceUri(folder.uri)),
       );
       resetImportedSnapshots();
+      clearSchemaLocaleCaches();
       refreshOpenDocumentStates();
       revalidateActiveJavaScriptStates();
     });
@@ -1007,29 +1173,34 @@ connection.onInitialized(() => {
           { globPattern: '**/config/**' },
           { globPattern: '**/layout/**' },
           { globPattern: '**/templates/**' },
-          { globPattern: '**/*.{js,jsx,ts,tsx,mjs,cjs}' },
+          { globPattern: '**/locales/*.schema.json' },
+          { globPattern: '**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}' },
+          { globPattern: '**/package.json' },
         ],
       })
       .catch((error) => connection.console.warn(`Unable to watch theme roots: ${error}`));
   }
 });
 connection.onDidChangeWatchedFiles((params) => {
+  if (params.changes.some((change) => /\/locales\/[^/]+\.schema\.json$/.test(change.uri))) {
+    clearSchemaLocaleCaches();
+  }
   if (params.changes.some(changeAffectsThemeRoots)) {
+    clearSchemaLocaleCaches();
     clearThemeRootCaches();
     refreshOpenDocumentStates();
   }
-  if (invalidateImportedSnapshots(params.changes)) {
-    revalidateActiveJavaScriptStates();
-  }
+  revalidateActiveJavaScriptStates(invalidateImportedSnapshots(params.changes));
 });
 
 connection.onCompletion(async (params, cancellationToken) => {
   const uri = params.textDocument.uri;
   const state = statesByUri.get(uri);
-  if (!state || cancellationToken.isCancellationRequested) return null;
+  if (!state || state.documentTooLarge || cancellationToken.isCancellationRequested) return null;
 
   const offset = state.document.offsetAt(params.position);
-  const settingResults = settingsCompletions(state, offset);
+  const settingResults = await settingsCompletions(state, offset);
+  if (cancellationToken.isCancellationRequested || statesByUri.get(uri) !== state) return null;
   if (settingResults) return settingResults;
   const liquidDocTagResults = liquidDocTagCompletions(state, offset, params.context);
   if (liquidDocTagResults) return liquidDocTagResults;
@@ -1131,12 +1302,72 @@ connection.onDefinition(async (params, cancellationToken) => {
 
   const offset = state.document.offsetAt(params.position);
   const embeddedDefinition =
+    settingDefinitions(state, offset) ??
     javascriptDefinitions(state, offset) ?? stylesheetDefinition(state, offset);
   if (embeddedDefinition) return embeddedDefinition;
 
   const definition = await definitionForReference(state, offset);
   if (cancellationToken.isCancellationRequested || statesByUri.get(uri) !== state) return null;
   return definition;
+});
+
+connection.onSignatureHelp((params, cancellationToken) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state || cancellationToken.isCancellationRequested) return null;
+  return javascriptSignatureHelp(state, state.document.offsetAt(params.position));
+});
+
+connection.onPrepareRename((params, cancellationToken) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state || cancellationToken.isCancellationRequested) return null;
+  const info = javascriptRenameInfo(state, state.document.offsetAt(params.position));
+  return info ? { range: rangeForSpan(state.document, info.triggerSpan), placeholder: info.displayName } : null;
+});
+
+connection.onRenameRequest((params, cancellationToken) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state || cancellationToken.isCancellationRequested) return null;
+  const offset = state.document.offsetAt(params.position);
+  const info = javascriptRenameInfo(state, offset);
+  if (!info) return null;
+  const service = ensureLanguageService();
+  const sourceFile = service.getProgram().getSourceFile(state.fileName);
+  const isPrivate = ts.isPrivateIdentifier(ts.getTokenAtPosition(sourceFile, info.triggerSpan.start));
+  const identifier = isPrivate && params.newName.startsWith('#') ? params.newName.slice(1) : params.newName;
+  const token = ts.stringToToken(identifier);
+  if (!ts.isIdentifierText(identifier, ts.ScriptTarget.ES2022) ||
+      (isPrivate
+        ? identifier === 'constructor'
+        : (token >= ts.SyntaxKind.FirstReservedWord && token <= ts.SyntaxKind.LastReservedWord) ||
+          identifier === 'await' || identifier === 'yield')) return null;
+  // TypeScript's rename spans include '#'. Preserve privacy even when the
+  // client submits a bare name, and do not mistake quoted properties for fields.
+  const newName = isPrivate ? `#${identifier}` : identifier;
+  const locations = service.findRenameLocations(
+    state.fileName, offset, false, false, { providePrefixAndSuffixTextForRename: true },
+  );
+  if (!locations?.length || !locations.every((entry) => localJavaScriptSpan(state, entry))) return null;
+  return {
+    changes: {
+      [state.document.uri]: locations.map((location) => ({
+        range: rangeForSpan(state.document, location.textSpan),
+        newText: (location.prefixText || '') + newName + (location.suffixText || ''),
+      })),
+    },
+  };
+});
+
+connection.onReferences((params, cancellationToken) => {
+  const state = statesByUri.get(params.textDocument.uri);
+  if (!state || cancellationToken.isCancellationRequested) return null;
+  const offset = state.document.offsetAt(params.position);
+  if (!localJavaScriptSymbol(state, offset)) return null;
+  const symbols = ensureLanguageService().findReferences(state.fileName, offset) || [];
+  const locations = symbols.flatMap((symbol) => symbol.references)
+    .filter((entry) => localJavaScriptSpan(state, entry) &&
+      (params.context.includeDeclaration || !entry.isDefinition))
+    .map((entry) => ({ uri: state.document.uri, range: rangeForSpan(state.document, entry.textSpan) }));
+  return locations.length > 0 ? locations : null;
 });
 
 connection.onDocumentRangeFormatting((params) => {
@@ -1171,7 +1402,7 @@ connection.onHover((params) => {
   };
 });
 
-documents.onDidOpen(({ document }) => scheduleValidation(updateState(document)));
+// TextDocuments also emits onDidChangeContent for didOpen. Handle it only once.
 documents.onDidChangeContent(({ document }) => {
   const change = pendingDocumentChanges.get(document.uri);
   pendingDocumentChanges.delete(document.uri);
@@ -1185,6 +1416,8 @@ documents.onDidClose(({ document }) => {
   const state = statesByUri.get(document.uri);
   if (state) {
     statesByFileName.delete(state.fileName);
+    moduleDependencies.delete(state.fileName);
+    invalidatedModuleResolutions.delete(state.fileName);
     if (state.embedded.ranges.length > 0) {
       activeJavaScriptStates.delete(state);
       projectVersion += 1;
@@ -1202,6 +1435,9 @@ connection.onShutdown(() => {
   librarySnapshots.clear();
   importedSnapshotFiles.clear();
   importedSnapshotVersions.clear();
+  moduleDependencies.clear();
+  invalidatedModuleResolutions.clear();
+  clearSchemaLocaleCaches();
 });
 
 documents.listen(connection);

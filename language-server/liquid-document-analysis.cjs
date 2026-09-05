@@ -7,15 +7,18 @@ function ensureLiquidParser() {
   return liquidParser;
 }
 
+function needsLiquidAnalysis(source) {
+  return /{%-?\s*(?:comment|raw|doc|javascript|stylesheet|schema)\b/.test(source) ||
+    /\b(?:section|block)\.settings\b/.test(source);
+}
+
 function analyzeLiquidDocument(source) {
   const rawTags = [];
   const liquidExpressionRanges = [];
+  const settingReferences = [];
   let analysisReusable = true;
-  if (
-    !/{%-?\s*(?:comment|raw|doc|javascript|stylesheet|schema)\b/.test(source) &&
-    !/\b(?:section|block)\.settings\b/.test(source)
-  ) {
-    return { rawTags, liquidExpressionRanges, analysisReusable };
+  if (!needsLiquidAnalysis(source)) {
+    return { rawTags, liquidExpressionRanges, settingReferences, analysisReusable, analysisSkipped: true };
   }
 
   try {
@@ -34,6 +37,20 @@ function analyzeLiquidDocument(source) {
           body: { position: { ...node.body.position } },
         });
         return;
+      }
+
+      if (
+        node.type === NodeTypes.VariableLookup &&
+        (node.name === 'section' || node.name === 'block') &&
+        node.lookups[0]?.type === NodeTypes.String &&
+        node.lookups[0].value === 'settings' &&
+        node.lookups[1]?.type === NodeTypes.String
+      ) {
+        settingReferences.push({
+          objectName: node.name,
+          id: node.lookups[1].value,
+          ...node.lookups[1].position,
+        });
       }
 
       const isVariableOutput = node.type === NodeTypes.LiquidVariableOutput;
@@ -63,7 +80,15 @@ function analyzeLiquidDocument(source) {
     // should not treat arbitrary text as Liquid or an embedded language then.
     analysisReusable = false;
   }
-  return { rawTags, liquidExpressionRanges, analysisReusable };
+  const outsideRawBody = (range) => !rawTags.some((node) =>
+    range.start >= node.body.position.start && range.end <= node.body.position.end,
+  );
+  return {
+    rawTags,
+    liquidExpressionRanges: liquidExpressionRanges.filter(outsideRawBody),
+    settingReferences: settingReferences.filter(outsideRawBody),
+    analysisReusable,
+  };
 }
 
 function rawTagNodes(source) {
@@ -165,8 +190,36 @@ function reusableAnalysis(previous, change) {
 
   const start = change.previousDocument.offsetAt(contentChange.range.start);
   const end = change.previousDocument.offsetAt(contentChange.range.end);
-  const removed = change.previousDocument.getText().slice(start, end);
-  if (/[{}%]|settings/.test(removed) || /[{}%]|settings/.test(contentChange.text)) {
+  const source = change.previousDocument.getText();
+  if (previous.analysisSkipped) {
+    // The edit itself need not contain a complete keyword: e.g. inserting the
+    // final 't' in javascrip. Recheck the cheap gate before reusing empty state.
+    const updated = source.slice(0, start) + contentChange.text + source.slice(end);
+    if (needsLiquidAnalysis(updated)) return null;
+    return {
+      analysis: {
+        rawTags: [], liquidExpressionRanges: [], settingReferences: [],
+        analysisReusable: true, analysisSkipped: true,
+      },
+      shiftedRawTagNames: new Set(),
+      rawBodyChange: null,
+    };
+  }
+  const removed = source.slice(start, end);
+  const bodyTag = previous.rawTags.find(
+    (node) =>
+      (node.name === 'javascript' || node.name === 'stylesheet') &&
+      start >= node.body.position.start && end <= node.body.position.end,
+  );
+  if (bodyTag) {
+    const body = source.slice(bodyTag.body.position.start, bodyTag.body.position.end);
+    const updatedBody =
+      source.slice(bodyTag.body.position.start, start) + contentChange.text +
+      source.slice(end, bodyTag.body.position.end);
+    // Keyword edits to an existing pseudo-delimiter and delimiters assembled
+    // across edit boundaries must both use the tolerant parser instead.
+    if (/{[{%]/.test(body) || /{[{%]/.test(updatedBody)) return null;
+  } else if (/[{}%]|settings/.test(removed) || /[{}%]|settings/.test(contentChange.text)) {
     return null;
   }
 
@@ -176,7 +229,7 @@ function reusableAnalysis(previous, change) {
   const touchesExpression = (range) =>
     start === end ? start >= range.start && start <= range.end : overlapsRange(range);
   if (
-    previous.rawTags.some((node) => touchesRawTag(node.position)) ||
+    previous.rawTags.some((node) => node !== bodyTag && touchesRawTag(node.position)) ||
     previous.liquidExpressionRanges.some(touchesExpression)
   ) {
     return null;
@@ -189,15 +242,28 @@ function reusableAnalysis(previous, change) {
       : { ...position };
   const rawTags = previous.rawTags.map((node) => ({
     ...node,
-    position: shiftPosition(node.position),
+    position: node === bodyTag
+      ? { start: node.position.start, end: node.position.end + delta }
+      : shiftPosition(node.position),
     body: {
       ...node.body,
-      position: shiftPosition(node.body.position),
+      position: node === bodyTag
+        ? { start: node.body.position.start, end: node.body.position.end + delta }
+        : shiftPosition(node.body.position),
     },
   }));
   const liquidExpressionRanges = previous.liquidExpressionRanges.map(shiftPosition);
   return {
-    analysis: { rawTags, liquidExpressionRanges, analysisReusable: true },
+    analysis: {
+      rawTags,
+      liquidExpressionRanges,
+      settingReferences: (previous.settingReferences || []).map((reference) => ({
+        ...reference,
+        ...shiftPosition(reference),
+      })),
+      analysisReusable: true,
+    },
+    rawBodyChange: bodyTag ? { tagName: bodyTag.name, start, end, text: contentChange.text } : null,
     shiftedRawTagNames: new Set(
       delta === 0
         ? []
