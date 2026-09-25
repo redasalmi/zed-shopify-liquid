@@ -221,16 +221,9 @@ npm ci
 npm test
 ```
 
-Run the embedded-server stress workload independently with `npm run test:stress`.
-The enforced budgets and optimization strategy are documented in the
-[Performance Plan](docs/PERFORMANCE.md).
-
-See [Project History and Architecture](docs/PROJECT_HISTORY.md) for a detailed
-comparison with the pre-overhaul extension, completed work, design decisions,
-performance notes, and repository relationships. The
-[Release Checklist](docs/RELEASE.md) records the automated and Zed-host release
-gates. [`AGENTS.md`](AGENTS.md) provides concise project guidance that Pi and
-compatible coding agents load in future sessions.
+Run the embedded-server stress workload, which enforces the memory budgets,
+independently with `npm run test:stress`. [`AGENTS.md`](AGENTS.md) records the
+architecture constraints, validation commands, and the Zed release smoke test.
 
 ## Credits
 
