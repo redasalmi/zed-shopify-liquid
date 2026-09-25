@@ -14,7 +14,7 @@ merchant: "Crème 🛍️"
 
 {% render 'card', product: product %}
 {% content_for 'block', type: 'hero', id: 'main' %}
-{% assign card_title = product.title %}
+{% assign card_title = product.title | default: blank %}
 {% for variant in product.variants %}
   {{ variant.title }}
 {% endfor %}

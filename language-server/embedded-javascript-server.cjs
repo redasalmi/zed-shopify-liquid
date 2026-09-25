@@ -7,7 +7,9 @@ const {
   CompletionItemKind,
   CompletionItemTag,
   DiagnosticSeverity,
+  DiagnosticTag,
   DidChangeWatchedFilesNotification,
+  FileChangeType,
   InsertTextFormat,
   ProposedFeatures,
   TextDocumentSyncKind,
@@ -127,7 +129,11 @@ function terminateAfterUnexpectedFailure(error) {
 }
 
 process.once('uncaughtException', terminateAfterUnexpectedFailure);
-process.once('unhandledRejection', terminateAfterUnexpectedFailure);
+// A rejection is isolated to one asynchronous operation. Keep serving later
+// requests because Zed does not restart a language server after it exits.
+process.on('unhandledRejection', (reason) => {
+  console.error(reason instanceof Error ? reason.stack || reason.message : String(reason));
+});
 
 const BASIC_LIQUID_DOC_PARAM_TYPES = [
   ['string', undefined],
@@ -327,9 +333,12 @@ function changeAffectsThemeRoots(change) {
   } catch (_error) {
     return false;
   }
+  if (path.basename(fileName) === '.theme-check.yml') return true;
+  // Theme evidence depends only on whether these paths exist. Content saves,
+  // such as theme-editor syncs of settings_data.json, cannot change it.
+  if (change.type === FileChangeType.Changed) return false;
   const parts = path.resolve(fileName).split(path.sep);
   return (
-    path.basename(fileName) === '.theme-check.yml' ||
     parts.some((part) => part === 'config' || part === 'layout' || part === 'templates')
   );
 }
@@ -419,15 +428,13 @@ async function settingsCompletions(state, offset) {
 
   const objectName = match[1];
   const partial = match[2];
-  const pathName = (state.sourceFileName || state.fileName).replace(/\\/g, '/');
 
   // Shopify's server already completes section settings and settings in Theme
   // Block files. Only supplement its upstream gap for inline blocks declared
   // by traditional section schemas, avoiding duplicate entries in Zed.
-  const root = themeRootForStandardFile(
-    state.sourceFileName || state.fileName, EMBEDDED_THEME_DIRECTORIES,
-  );
-  if (objectName !== 'block' || !pathName.includes('/sections/') || !root) {
+  const root = themeRootForStandardFile(state.sourceFileName, EMBEDDED_THEME_DIRECTORIES);
+  const category = path.basename(path.dirname(state.sourceFileName));
+  if (objectName !== 'block' || category !== 'sections' || !root) {
     return null;
   }
 
@@ -859,6 +866,15 @@ function javascriptDefinitions(state, offset) {
   return locations.length > 0 ? locations : null;
 }
 
+// Public-API replacement for TypeScript's internal getTokenAtPosition.
+function deepestNodeAt(node, sourceFile, position) {
+  return ts.forEachChild(node, (child) =>
+    child.getStart(sourceFile) <= position && position < child.end
+      ? deepestNodeAt(child, sourceFile, position)
+      : undefined,
+  ) ?? node;
+}
+
 function localJavaScriptSpan(state, entry) {
   return entry.fileName === state.fileName && containsSpan(
     state.embedded.ranges, entry.textSpan.start, entry.textSpan.start + entry.textSpan.length,
@@ -1032,11 +1048,25 @@ function diagnosticSeverity(category) {
       return DiagnosticSeverity.Error;
     case ts.DiagnosticCategory.Warning:
       return DiagnosticSeverity.Warning;
-    case ts.DiagnosticCategory.Suggestion:
-      return DiagnosticSeverity.Information;
     default:
       return DiagnosticSeverity.Hint;
   }
+}
+
+function diagnosticTags(diagnostic) {
+  const tags = [];
+  if (diagnostic.reportsUnnecessary) tags.push(DiagnosticTag.Unnecessary);
+  if (diagnostic.reportsDeprecated) tags.push(DiagnosticTag.Deprecated);
+  return tags.length > 0 ? tags : undefined;
+}
+
+// TypeScript reads `@ts-nocheck` only from a file's leading comments, but the
+// block body follows the injected function wrapper in the virtual source.
+function skipsTypeChecking(state) {
+  const source = state.document.getText();
+  return state.embedded.ranges.some(({ start, end }) =>
+    /@ts-nocheck\b/.test(/^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/.exec(source.slice(start, end))[0]),
+  );
 }
 
 function validate(uri) {
@@ -1054,10 +1084,11 @@ function validate(uri) {
   }
 
   const service = ensureLanguageService();
+  const typeChecked = !skipsTypeChecking(state);
   const diagnostics = [
     ...service.getSyntacticDiagnostics(state.fileName),
-    ...service.getSemanticDiagnostics(state.fileName),
-    ...service.getSuggestionDiagnostics(state.fileName),
+    ...(typeChecked ? service.getSemanticDiagnostics(state.fileName) : []),
+    ...(typeChecked ? service.getSuggestionDiagnostics(state.fileName) : []),
   ]
     .filter(
       (diagnostic) =>
@@ -1076,6 +1107,7 @@ function validate(uri) {
         length: diagnostic.length,
       }),
       severity: diagnosticSeverity(diagnostic.category),
+      tags: diagnosticTags(diagnostic),
       code: diagnostic.code,
       source: 'typescript',
       message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
@@ -1332,7 +1364,9 @@ connection.onRenameRequest((params, cancellationToken) => {
   if (!info) return null;
   const service = ensureLanguageService();
   const sourceFile = service.getProgram().getSourceFile(state.fileName);
-  const isPrivate = ts.isPrivateIdentifier(ts.getTokenAtPosition(sourceFile, info.triggerSpan.start));
+  const isPrivate = ts.isPrivateIdentifier(
+    deepestNodeAt(sourceFile, sourceFile, info.triggerSpan.start),
+  );
   const identifier = isPrivate && params.newName.startsWith('#') ? params.newName.slice(1) : params.newName;
   const token = ts.stringToToken(identifier);
   if (!ts.isIdentifierText(identifier, ts.ScriptTarget.ES2022) ||

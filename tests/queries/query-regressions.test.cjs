@@ -53,7 +53,7 @@ function runQuery(name) {
   for (const match of result.stdout.matchAll(capturePattern)) {
     const start = offsetAt(Number(match[2]), Number(match[3]));
     const end = offsetAt(Number(match[4]), Number(match[5]));
-    captures.push({ name: match[1], text: fixture.slice(start, end) });
+    captures.push({ name: match[1], text: fixture.slice(start, end), start, end });
   }
   assert(captures.length > 0, `${name}.scm returned no captures`);
   return captures;
@@ -74,6 +74,19 @@ function assertCapture(captures, name, expected, { contains = false, trim = fals
   );
 }
 
+// Zed ignores `#set! priority` and paints the last capture covering a range.
+function assertEffectiveHighlight(captures, name, expected) {
+  const winners = captures
+    .filter((capture) => capture.text === expected)
+    .map(({ start, end }) =>
+      captures.findLast((capture) => capture.start <= start && capture.end >= end).name,
+    );
+  assert(
+    winners.includes(name),
+    `expected ${JSON.stringify(expected)} to render as @${name}; got ${JSON.stringify(winners)}`,
+  );
+}
+
 test('highlight captures preserve modern Liquid and LiquidDoc semantics', () => {
   const captures = runQuery('highlights');
   assertCapture(captures, 'keyword', '@prompt');
@@ -85,6 +98,15 @@ test('highlight captures preserve modern Liquid and LiquidDoc semantics', () => 
   assertCapture(captures, 'keyword', 'content_for');
   assertCapture(captures, 'property', 'available');
   assertCapture(captures, 'property', 'title');
+
+  assertEffectiveHighlight(captures, 'property', 'title');
+  assertEffectiveHighlight(captures, 'property', 'available');
+  assertEffectiveHighlight(captures, 'variable.parameter', 'variant');
+  assertEffectiveHighlight(captures, 'variable.parameter', 'type');
+  assertEffectiveHighlight(captures, 'constant.builtin', 'blank');
+  assertEffectiveHighlight(captures, 'comment', 'enddoc');
+  assertEffectiveHighlight(captures, 'keyword', '@prompt');
+  assertEffectiveHighlight(captures, 'type', '{product}');
 });
 
 test('injection captures preserve embedded language boundaries', () => {

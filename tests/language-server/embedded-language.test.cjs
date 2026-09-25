@@ -96,3 +96,27 @@ test('embedded range comparison invalidates edits inside a range', () => {
     false,
   );
 });
+
+test('embedded range comparison invalidates sequential multi-change edits', () => {
+  // Later LSP changes are relative to the document after earlier changes. Here
+  // the body edit would appear to touch only the closing tag in the original.
+  const source = '<p>ab</p>{% javascript %}const value = 1; value{% endjavascript %}\n';
+  const updated = source.replace('; value{%', '; valuf{%');
+  const bodyEnd = source.indexOf('{% endjavascript');
+  const change = {
+    previousDocument: TextDocument.create('file:///example.liquid', 'liquid', 1, source),
+    changes: [
+      { range: { start: { line: 0, character: 3 }, end: { line: 0, character: 3 } }, text: '12345' },
+      { range: { start: { line: 0, character: bodyEnd }, end: { line: 0, character: bodyEnd + 5 } }, text: 'valuf' },
+      { range: { start: { line: 0, character: 3 }, end: { line: 0, character: 8 } }, text: '' },
+    ],
+  };
+  assert.equal(
+    sameEmbeddedLanguage(
+      embeddedJavaScript(source, rangesFor(source), true),
+      embeddedJavaScript(updated, rangesFor(updated), true),
+      change,
+    ),
+    false,
+  );
+});

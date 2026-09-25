@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readdirSync, readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
@@ -45,6 +45,7 @@ for (const [packageName, constantName] of [
   ['vscode-css-languageservice', 'VSCODE_CSS_LANGUAGE_SERVICE_VERSION'],
   ['vscode-languageserver', 'VSCODE_LANGUAGE_SERVER_VERSION'],
   ['vscode-languageserver-textdocument', 'VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION'],
+  ['jsonc-parser', 'JSONC_PARSER_VERSION'],
 ]) {
   const expected = packageJson.devDependencies[packageName];
   assert(expected, `${packageName} must be listed in devDependencies`);
@@ -53,12 +54,9 @@ for (const [packageName, constantName] of [
   assert.equal(match[1], expected, `${packageName} must match its Rust runtime pin`);
 }
 
-for (const supportFile of [
-  'embedded-language.cjs',
-  'liquid-document-analysis.cjs',
-  'liquid-doc-tools.cjs',
-  'theme-roots.cjs',
-]) {
+for (const supportFile of readdirSync(path.join(root, 'language-server')).filter(
+  (name) => name.endsWith('.cjs') && name !== 'embedded-javascript-server.cjs',
+)) {
   assert(rustSource.includes(`"${supportFile}"`), `${supportFile} must be written by the extension`);
 }
 

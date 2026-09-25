@@ -375,6 +375,85 @@ test('theme evidence changes immediately refresh open document activation', { ti
   }
 });
 
+test('content-only theme file saves do not reanalyze open documents', { timeout: 10_000 }, async () => {
+  const theme = await createTheme({ 'config/settings_data.json': '{}' });
+  const client = embeddedClient(theme.root, { env: { LIQUID_PERFORMANCE_LOGGING: '1' } });
+  const analysisLogs = () =>
+    client.notifications.filter(
+      (message) =>
+        message.method === 'window/logMessage' &&
+        message.params.message.startsWith('Liquid analysis'),
+    );
+
+  try {
+    await client.initialize({ workspace: { didChangeWatchedFiles: { dynamicRegistration: true } } });
+    client.open(theme.file('sections/open.liquid'), '{% schema %}{}{% endschema %}');
+    await client.request('textDocument/hover', {
+      textDocument: { uri: pathToFileURL(theme.file('sections/open.liquid')).href },
+      position: { line: 0, character: 0 },
+    });
+    const logsBefore = analysisLogs().length;
+
+    const settingsUri = pathToFileURL(theme.file('config/settings_data.json')).href;
+    client.notify('workspace/didChangeWatchedFiles', { changes: [{ uri: settingsUri, type: 2 }] });
+    await client.request('textDocument/hover', {
+      textDocument: { uri: pathToFileURL(theme.file('sections/open.liquid')).href },
+      position: { line: 0, character: 0 },
+    });
+    assert.equal(analysisLogs().length, logsBefore);
+
+    client.notify('workspace/didChangeWatchedFiles', { changes: [{ uri: settingsUri, type: 3 }] });
+    await client.request('textDocument/hover', {
+      textDocument: { uri: pathToFileURL(theme.file('sections/open.liquid')).href },
+      position: { line: 0, character: 0 },
+    });
+    assert.equal(analysisLogs().length, logsBefore + 1, 'deletions still refresh theme evidence');
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
+test('TypeScript suggestions are hints and @ts-nocheck skips type checking', { timeout: 10_000 }, async () => {
+  const source = `{% javascript %}
+const unused = 1;
+Shopify.theme;
+{% endjavascript %}
+`;
+  const noCheckSource = `{% javascript %}
+/* Theme globals are defined elsewhere. */
+// @ts-nocheck
+const unused = 1;
+Shopify.theme;
+{% endjavascript %}
+`;
+  const theme = await createTheme({});
+  const client = embeddedClient(theme.root);
+
+  try {
+    await client.initialize();
+    const uri = client.open(theme.file('sections/checked.liquid'), source);
+    const checked = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) => params.uri === uri && params.diagnostics.length > 0,
+    );
+    const unused = checked.diagnostics.find((diagnostic) => diagnostic.code === 6133);
+    assert.equal(unused.severity, 4);
+    assert.deepEqual(unused.tags, [1]);
+    assert(checked.diagnostics.some((diagnostic) => diagnostic.code === 2304));
+
+    client.change(uri, noCheckSource, 2);
+    const unchecked = await client.waitForNotification(
+      'textDocument/publishDiagnostics',
+      (params) => params.uri === uri,
+    );
+    assert.deepEqual(unchecked.diagnostics, []);
+  } finally {
+    await client.stop();
+    await theme.cleanup();
+  }
+});
+
 test('oversized embedded documents degrade without loading TypeScript', { timeout: 10_000 }, async () => {
   const largeSource = `{% javascript %}\n${'x'.repeat(2048)}\ndocument.\n{% endjavascript %}`;
   const smallSource = `{% javascript %}\ndocument.\n{% endjavascript %}`;
@@ -608,6 +687,10 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
 {% section 'footer' %}
 {{ 'theme.js' | asset_url }}
 {% content_for 'block', type: 'feature' %}
+{% assign styles = 'theme.css' | asset_url %}
+{% liquid
+  echo 'vendor.js' | asset_url
+%}
 `;
   const nestedNavigationSource = `{% render 'card' %}`;
   const theme = await createTheme({
@@ -618,6 +701,8 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
     'snippets/card.liquid': 'root card',
     'snippets/cards/product.liquid': 'nested product card',
     'assets/theme.js': 'asset',
+    'assets/theme.css': 'asset',
+    'assets/vendor.js': 'asset',
     'sections/footer.liquid': 'footer',
     'blocks/feature.liquid': 'feature',
     'nested/.theme-check.yml': 'root: .\n',
@@ -769,6 +854,8 @@ const total=1;console.log(total);missingName;const element=document.querySelecto
       ["'footer'", 'sections/footer.liquid'],
       ["'theme.js'", 'assets/theme.js'],
       ["'feature'", 'blocks/feature.liquid'],
+      ["'theme.css'", 'assets/theme.css'],
+      ["'vendor.js'", 'assets/vendor.js'],
     ]) {
       const definition = await client.request('textDocument/definition', {
         textDocument: { uri: navigationUri },

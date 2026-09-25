@@ -26,11 +26,15 @@ async function readSchemaLocale(root) {
       const buffer = Buffer.alloc(stat.size + 1);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
       if (bytesRead > stat.size) return {};
-      // Shopify locales allow comments and trailing commas. Load the existing
-      // public parser lazily, but reject genuinely malformed JSONC rather than
-      // displaying translations recovered from an incomplete file.
-      const { parseJSON } = require('@shopify/theme-language-server-common');
-      return parseJSON(buffer.toString('utf8', 0, bytesRead), {}, true);
+      // Shopify locales allow comments and trailing commas. Use the JSONC
+      // parser behind Shopify's parseJSON, but reject genuinely malformed files
+      // rather than displaying translations recovered from an incomplete file.
+      const { parse } = require('jsonc-parser');
+      const errors = [];
+      const data = parse(buffer.toString('utf8', 0, bytesRead), errors, {
+        allowTrailingComma: true,
+      });
+      return errors.length > 0 ? {} : data;
     } finally {
       await file.close();
     }

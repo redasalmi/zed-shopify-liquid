@@ -34,6 +34,9 @@ function embeddedStylesheet(source, rawTags, enabled) {
 
 function changesLineStructure(documentChange, ranges) {
   if (!documentChange?.changes?.length || !documentChange.previousDocument) return false;
+  // LSP applies content changes sequentially, so later ranges are relative to
+  // intermediate documents rather than previousDocument.
+  if (documentChange.changes.length > 1) return ranges.length > 0;
 
   return documentChange.changes.some((change) => {
     if (!change.range) return ranges.length > 0;

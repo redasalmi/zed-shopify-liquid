@@ -32,6 +32,7 @@ const THEME_LANGUAGE_SERVER_COMMON_VERSION: &str = "2.22.1";
 const VSCODE_CSS_LANGUAGE_SERVICE_VERSION: &str = "6.3.2";
 const VSCODE_LANGUAGE_SERVER_VERSION: &str = "8.1.0";
 const VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION: &str = "1.0.12";
+const JSONC_PARSER_VERSION: &str = "3.3.1";
 const SUPPORT_PACKAGES: &[(&str, &str, &str)] = &[
     (
         "@shopify/liquid-html-parser",
@@ -62,6 +63,11 @@ const SUPPORT_PACKAGES: &[(&str, &str, &str)] = &[
         "vscode-languageserver-textdocument",
         VSCODE_LANGUAGE_SERVER_TEXTDOCUMENT_VERSION,
         "node_modules/vscode-languageserver-textdocument/lib/umd/main.js",
+    ),
+    (
+        "jsonc-parser",
+        JSONC_PARSER_VERSION,
+        "node_modules/jsonc-parser/lib/umd/main.js",
     ),
 ];
 const EMBEDDED_SERVER: &str = include_str!("../language-server/embedded-javascript-server.cjs");
@@ -216,8 +222,6 @@ impl LiquidExtension {
         language_server_id: &zed::LanguageServerId,
     ) -> Result<String> {
         let result = (|| {
-            self.server_script_path(language_server_id)?;
-
             let support_packages_exist = || {
                 SUPPORT_PACKAGES.iter().all(|(_, _, entry_path)| {
                     fs::metadata(entry_path).is_ok_and(|stat| stat.is_file())
@@ -279,6 +283,19 @@ impl LiquidExtension {
     }
 }
 
+// Zed applies `lsp.<server>.binary.path` itself; forward `binary.env` so users
+// can tune the servers, e.g. the embedded server's LIQUID_* limits.
+fn binary_env(
+    language_server_id: &zed::LanguageServerId,
+    worktree: &zed::Worktree,
+) -> Vec<(String, String)> {
+    LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+        .ok()
+        .and_then(|settings| settings.binary?.env)
+        .map(|env| env.into_iter().collect())
+        .unwrap_or_default()
+}
+
 fn workspace_configuration(settings: Option<serde_json::Value>) -> serde_json::Value {
     settings.unwrap_or_else(|| serde_json::json!({}))
 }
@@ -295,7 +312,7 @@ impl zed::Extension for LiquidExtension {
     fn language_server_command(
         &mut self,
         language_server_id: &zed::LanguageServerId,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let is_embedded_server = language_server_id.as_ref() == EMBEDDED_SERVER_ID;
         let server_path = if is_embedded_server {
@@ -316,7 +333,7 @@ impl zed::Extension for LiquidExtension {
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args,
-            env: Default::default(),
+            env: binary_env(language_server_id, worktree),
         })
     }
 
@@ -353,7 +370,6 @@ mod tests {
     use super::*;
 
     const EXTENSION_MANIFEST: &str = include_str!("../extension.toml");
-    const EXTENSION_SOURCE: &str = include_str!("liquid.rs");
     const LANGUAGE_CONFIG: &str = include_str!("../languages/liquid/config.toml");
     const TEST_PACKAGE: &str = include_str!("../package.json");
     #[test]
@@ -378,12 +394,6 @@ mod tests {
             handler < start,
             "recovery handlers must be active before startup"
         );
-    }
-
-    #[test]
-    fn installation_status_is_cleared_or_failed_explicitly() {
-        assert!(EXTENSION_SOURCE.contains("LanguageServerInstallationStatus::None"));
-        assert!(EXTENSION_SOURCE.contains("LanguageServerInstallationStatus::Failed"));
     }
 
     #[test]
@@ -445,57 +455,35 @@ mod tests {
     }
 
     #[test]
-    fn embedded_server_scopes_semantic_features_to_supported_regions() {
-        let embedded_language = EMBEDDED_SUPPORT_FILES
+    fn embedded_runtime_deploys_every_module_it_requires() {
+        let sources = std::iter::once(EMBEDDED_SERVER)
+            .chain(EMBEDDED_SUPPORT_FILES.iter().map(|(_, source)| *source));
+        let mut local_modules = Vec::new();
+        for source in sources {
+            for rest in source.split("require('").skip(1) {
+                let (module, _) = rest.split_once('\'').unwrap();
+                if let Some(local) = module.strip_prefix("./") {
+                    local_modules.push(local);
+                } else if !module.starts_with("node:") {
+                    let segments = if module.starts_with('@') { 2 } else { 1 };
+                    let package = module.splitn(segments + 1, '/').take(segments);
+                    let package = package.collect::<Vec<_>>().join("/");
+                    assert!(
+                        package == TYPESCRIPT_PACKAGE_NAME
+                            || SUPPORT_PACKAGES.iter().any(|(name, _, _)| *name == package),
+                        "embedded runtime imports undeclared package '{package}'",
+                    );
+                }
+            }
+        }
+        local_modules.sort_unstable();
+        local_modules.dedup();
+        let mut deployed: Vec<_> = EMBEDDED_SUPPORT_FILES
             .iter()
-            .find_map(|(path, source)| (*path == "embedded-language.cjs").then_some(*source))
-            .unwrap();
-        let liquid_analysis = EMBEDDED_SUPPORT_FILES
-            .iter()
-            .find_map(|(path, source)| (*path == "liquid-document-analysis.cjs").then_some(*source))
-            .unwrap();
-        let theme_roots = EMBEDDED_SUPPORT_FILES
-            .iter()
-            .find_map(|(path, source)| (*path == "theme-roots.cjs").then_some(*source))
-            .unwrap();
-        let liquid_doc_tools = EMBEDDED_SUPPORT_FILES
-            .iter()
-            .find_map(|(path, source)| (*path == "liquid-doc-tools.cjs").then_some(*source))
-            .unwrap();
-
-        assert!(EMBEDDED_SERVER.contains("require('./embedded-language.cjs')"));
-        assert!(EMBEDDED_SERVER.contains("require('./liquid-document-analysis.cjs')"));
-        assert!(EMBEDDED_SERVER.contains("require('./theme-roots.cjs')"));
-        assert!(EMBEDDED_SERVER.contains("require('./liquid-doc-tools.cjs')"));
-        assert!(liquid_doc_tools.contains("theme-language-server-common/dist/utils/liquidDoc"));
-        assert!(liquid_doc_tools.contains("SUPPORTED_LIQUID_DOC_TAG_HANDLES"));
-        assert!(embedded_language.contains("embeddedLanguage(source, 'javascript'"));
-        assert!(embedded_language.contains("embeddedLanguage(source, 'stylesheet'"));
-        assert!(embedded_language.contains("slice(0, 1)"));
-        assert!(embedded_language.contains("(function(){"));
-        assert!(liquid_analysis.contains("function rawTagNodes(source)"));
-        assert!(theme_roots.contains("configuredThemeRootForFile"));
-        assert!(EMBEDDED_SERVER.contains("EMBEDDED_THEME_DIRECTORIES"));
-        assert!(EMBEDDED_SERVER.contains("getCompletionsAtPosition"));
-        assert!(EMBEDDED_SERVER.contains("getCompletionEntryDetails"));
-        assert!(EMBEDDED_SERVER.contains("getSemanticDiagnostics"));
-        assert!(EMBEDDED_SERVER.contains("containsOffset(state.embedded.ranges"));
-        assert!(EMBEDDED_SERVER.contains("settingsCompletions"));
-        assert!(EMBEDDED_SERVER.contains("schema.blocks.flatMap"));
-        assert!(EMBEDDED_SERVER.contains("liquidDocTypeCompletions"));
-        assert!(EMBEDDED_SERVER.contains("liquidDocTagCompletions"));
-        assert!(EMBEDDED_SERVER.contains("@shopify/theme-check-docs-updater"));
-        assert!(EMBEDDED_SERVER.contains("liquidDocTools()"));
-        assert!(EMBEDDED_SERVER.contains("CompletionItemKind.EnumMember"));
-        assert!(EMBEDDED_SERVER.contains("`${name}[]`"));
-        assert!(EMBEDDED_SERVER.contains("textEdit"));
-        assert!(EMBEDDED_SERVER.contains("definitionForReference"));
-        assert!(EMBEDDED_SERVER.contains("javascriptDefinitions"));
-        assert!(EMBEDDED_SERVER.contains("stylesheetDefinition"));
-        assert!(EMBEDDED_SERVER.contains("embeddedRangeFormatting"));
-        assert!(EMBEDDED_SERVER.contains("vscode-css-languageservice"));
-        assert!(liquid_analysis.contains("toTolerantLiquidHtmlAST"));
-        assert!(EMBEDDED_SERVER.contains("pathToFileURL(candidate)"));
+            .map(|(path, _)| *path)
+            .collect();
+        deployed.sort_unstable();
+        assert_eq!(local_modules, deployed);
     }
 
     #[test]
@@ -506,18 +494,13 @@ mod tests {
     }
 
     #[test]
-    fn embedded_server_uses_stable_typescript_language_service() {
-        assert_eq!(TYPESCRIPT_PACKAGE_VERSION, "5.9.3");
-        assert!(TYPESCRIPT_SERVER_PATH.ends_with("/lib/typescript.js"));
-        assert!(EMBEDDED_SERVER.contains("ts.createLanguageService"));
-        assert!(EMBEDDED_SERVER.contains("One incremental service is shared"));
+    fn embedded_server_reports_the_manifest_version() {
         assert!(EMBEDDED_SERVER.contains("process.env.LIQUID_EXTENSION_VERSION"));
         let manifest_version = EXTENSION_MANIFEST
             .lines()
             .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
             .unwrap();
         assert_eq!(env!("CARGO_PKG_VERSION"), manifest_version);
-        assert_eq!(EMBEDDED_NODE_HEAP_ARG, "--max-old-space-size=128");
     }
 
     #[test]

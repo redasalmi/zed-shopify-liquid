@@ -16,7 +16,10 @@ custom-property navigation, and selection formatting. Bundled
 TypeScript-powered diagnostics, signature help, local symbol navigation,
 references, rename, and selection formatting. References and rename are limited
 to symbols declared in the same bundled block; imported symbols and browser
-globals are not partially renamed. Embedded asset semantics apply to Shopify-supported `sections/`,
+globals are not partially renamed. TypeScript suggestions such as unused
+variables appear as hints. Start a block with `// @ts-nocheck` to skip type
+checking when it relies on globals defined by other theme scripts, such as
+`Shopify`; syntax errors are still reported. Embedded asset semantics apply to Shopify-supported `sections/`,
 `blocks/`, and `snippets/` files; invalid tags elsewhere remain Shopify Theme
 Check diagnostics only.
 Schema-derived completion is also available for `section.settings.*` and
@@ -80,7 +83,24 @@ To protect the support-server process, documents over 2 × 1024² UTF-16 code
 units receive an informational diagnostic before Liquid parsing, and all
 supplemental features are disabled until the document shrinks. Individual embedded
 blocks over 512 × 1024 code units disable that block's supplemental semantics.
-Shopify's separate language server and Tree-sitter highlighting remain independent. For very large themes, setting
+Shopify's separate language server and Tree-sitter highlighting remain independent.
+These limits can be changed through the embedded server's environment:
+
+```json
+"lsp": {
+  "liquid-embedded-javascript": {
+    "binary": {
+      "env": {
+        "LIQUID_MAX_EMBEDDED_DOCUMENT_CODE_UNITS": "4194304",
+        "LIQUID_MAX_EMBEDDED_BLOCK_CODE_UNITS": "1048576",
+        "LIQUID_TYPESCRIPT_IDLE_MS": "60000"
+      }
+    }
+  }
+}
+```
+
+For very large themes, setting
 `themeCheck.preloadOnBoot` to `false`
 reduces Shopify language-server startup work and memory at the cost of making
 some whole-theme navigation operations slower on first use. Setting
@@ -91,7 +111,10 @@ retaining checks on open and save.
 
 The language server formats selections contained in bundled stylesheet and
 JavaScript blocks. Use Shopify's Prettier plugin when formatting the complete
-Liquid document. Install the formatter and plugin in each theme that has a
+Liquid document. Without Prettier, Zed's Format command (and format on save, if
+enabled) sends the whole document to this range formatter, which then formats
+only the bundled stylesheet and JavaScript blocks and leaves Liquid and HTML
+unchanged. Install the formatter and plugin in each theme that has a
 project-local `package.json`:
 
 ```sh

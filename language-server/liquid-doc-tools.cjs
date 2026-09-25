@@ -4,8 +4,9 @@ let tools;
 
 function liquidDocTools() {
   if (!tools) {
+    let module;
     try {
-      tools = require('@shopify/theme-language-server-common/dist/utils/liquidDoc');
+      module = require('@shopify/theme-language-server-common/dist/utils/liquidDoc');
     } catch (error) {
       throw new Error(
         `Shopify LiquidDoc compatibility module is unavailable: ${error.message}`,
@@ -13,13 +14,14 @@ function liquidDocTools() {
       );
     }
     if (
-      typeof tools.formatLiquidDocTagHandle !== 'function' ||
-      !tools.SUPPORTED_LIQUID_DOC_TAG_HANDLES
+      typeof module.formatLiquidDocTagHandle !== 'function' ||
+      !module.SUPPORTED_LIQUID_DOC_TAG_HANDLES
     ) {
       throw new Error(
         'Shopify LiquidDoc compatibility module does not expose the expected API',
       );
     }
+    tools = module;
   }
   return tools;
 }

@@ -104,7 +104,7 @@ jobs:
           cd "$RUNTIME_DIRECTORY"
           npm init --yes
           mapfile -t SUPPORT_PACKAGES < <(
-            node -e 'const p=require(process.env.PROJECT_PACKAGE_JSON).devDependencies; for (const name of ["@shopify/liquid-html-parser","@shopify/theme-check-docs-updater","@shopify/theme-language-server-common","vscode-css-languageservice","vscode-languageserver","vscode-languageserver-textdocument"]) console.log(`${name}@${p[name]}`)'
+            node -e 'const p=require(process.env.PROJECT_PACKAGE_JSON).devDependencies; for (const name of ["@shopify/liquid-html-parser","@shopify/theme-check-docs-updater","@shopify/theme-language-server-common","vscode-css-languageservice","vscode-languageserver","vscode-languageserver-textdocument","jsonc-parser"]) console.log(`${name}@${p[name]}`)'
           )
           npm install \
             --ignore-scripts \
@@ -125,6 +125,7 @@ jobs:
             'vscode-css-languageservice': project.devDependencies['vscode-css-languageservice'],
             'vscode-languageserver': project.devDependencies['vscode-languageserver'],
             'vscode-languageserver-textdocument': project.devDependencies['vscode-languageserver-textdocument'],
+            'jsonc-parser': project.devDependencies['jsonc-parser'],
           };
           function installedVersion(name) {
             let directory = path.dirname(require.resolve(name));
@@ -146,6 +147,7 @@ jobs:
           assert.equal(typeof require('@shopify/liquid-html-parser').toTolerantLiquidHtmlAST, 'function');
           assert.equal(typeof require('@shopify/theme-language-server-common/dist/utils/liquidDoc'), 'object');
           assert.equal(typeof require('vscode-css-languageservice').getCSSLanguageService, 'function');
+          assert.equal(typeof require('jsonc-parser').parse, 'function');
           assert.equal(typeof require('vscode-languageserver/node').createConnection, 'function');
           assert.equal(
             typeof require('vscode-languageserver-textdocument').TextDocument.create,

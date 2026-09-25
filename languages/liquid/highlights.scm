@@ -1,89 +1,13 @@
-((comment) @comment
-  (#set! priority 120))
+; Zed ignores `#set! priority`; when captures overlap, the later pattern wins.
+; Keep generic captures first and more specific captures after them.
 
-; Base doc styling - colors everything in doc as comment (green)
-((doc) @comment
-  (#set! priority 120))
+(identifier) @variable
 
-((doc_content) @comment
-  (#set! priority 121))
+(string) @string
 
-((doc_description_annotation) @keyword
-  (#set! priority 122))
+(boolean) @boolean
 
-("@param" @keyword
-  (#set! priority 122))
-
-("@example" @keyword
-  (#set! priority 122))
-
-((doc_param_name) @variable
-  (#set! priority 122))
-
-((doc_type) @type
-  (#set! priority 122))
-
-; Override example content so it's not styled as comment
-((doc_example_content) @embedded
-  (#set! priority 125))
-
-("@prompt" @keyword
-  (#set! priority 122))
-
-((doc_prompt_content) @string
-  (#set! priority 122))
-
-(raw_statement
-  (raw_content) @spell
-  (#set! priority 110))
-
-(argument
-  key: (identifier) @variable.parameter
-  (#set! priority 111))
-
-(content_for_argument
-  key: (_) @variable.parameter
-  (#set! priority 112))
-
-(assignment_statement
-  variable_name: (identifier) @variable
-  (#set! priority 112))
-
-(capture_statement
-  variable: (identifier) @variable
-  (#set! priority 112))
-
-(for_loop_statement
-  item: (identifier) @variable.parameter
-  (#set! priority 112))
-
-(tablerow_statement
-  item: (identifier) @variable.parameter
-  (#set! priority 112))
-
-(access
-  property: (_) @property
-  (#set! priority 112))
-
-((identifier) @constant.builtin
-  (#any-of? @constant.builtin "blank" "empty" "nil" "null")
-  (#set! priority 112))
-
-((identifier) @variable
-  (#set! priority 110))
-
-((string) @string
-  (#set! priority 110))
-
-((boolean) @boolean
-  (#set! priority 110))
-
-((number) @number
-  (#set! priority 110))
-
-(filter
-  name: (identifier) @function.call
-  (#set! priority 110))
+(number) @number
 
 ([
   "as"
@@ -112,8 +36,7 @@
   "style"
   "stylesheet"
   "with"
-] @keyword
-  (#set! priority 110))
+] @keyword)
 
 ([
   "case"
@@ -125,8 +48,7 @@
   "if"
   "unless"
   "when"
-] @keyword.conditional
-  (#set! priority 110))
+] @keyword.conditional)
 
 ([
   (break_statement)
@@ -139,16 +61,14 @@
   "for"
   "paginate"
   "tablerow"
-] @keyword.repeat
-  (#set! priority 110))
+] @keyword.repeat)
 
 ([
   "and"
   "contains"
   "in"
   "or"
-] @keyword.operator
-  (#set! priority 110))
+] @keyword.operator)
 
 ([
   "{{"
@@ -159,8 +79,7 @@
   "%}"
   "{%-"
   "-%}"
-] @punctuation.special
-  (#set! priority 110))
+] @punctuation.special)
 
 [
   "include"
@@ -199,3 +118,75 @@
   ","
   "."
 ] @punctuation.delimiter
+
+(filter
+  name: (identifier) @function.call)
+
+(raw_statement
+  (raw_content) @spell)
+
+(argument
+  key: (identifier) @variable.parameter)
+
+(content_for_argument
+  key: (_) @variable.parameter)
+
+(assignment_statement
+  variable_name: (identifier) @variable)
+
+(capture_statement
+  variable: (identifier) @variable)
+
+(for_loop_statement
+  item: (identifier) @variable.parameter)
+
+(tablerow_statement
+  item: (identifier) @variable.parameter)
+
+(access
+  property: (_) @property)
+
+((identifier) @constant.builtin
+  (#any-of? @constant.builtin "blank" "empty" "nil" "null"))
+
+; Color complete comment and doc tags, including delimiters, as comments.
+(comment) @comment
+
+(comment
+  [
+    "{%"
+    "%}"
+    "{%-"
+    "-%}"
+  ] @comment)
+
+(doc) @comment
+
+(doc
+  [
+    "{%"
+    "%}"
+    "{%-"
+    "-%}"
+    "doc"
+    "enddoc"
+  ] @comment)
+
+(doc_content) @comment
+
+(doc_description_annotation) @keyword
+
+"@param" @keyword
+
+"@example" @keyword
+
+"@prompt" @keyword
+
+(doc_param_name) @variable
+
+(doc_type) @type
+
+(doc_prompt_content) @string
+
+; Example content is Liquid, not comment text.
+(doc_example_content) @embedded
